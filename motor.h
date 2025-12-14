@@ -11,52 +11,27 @@
 #define BLOCK_COMMUTATION 			            0
 #define SINEWAVE_INTERPOLATION_60_DEGREES 	    0x80
 
+//Hall calibration
+#define HALL_TO_CALIBRATE 0
+#define HALL_CALIBRATING    1
+#define HALL_MEASURED       2
+#define HALL_CALIBRATION_CANCELED 3
+#define HALL_CALIBRATION_ERROR    4
+#define HALL_CALIBRATED     5
+
+#define ID_IQ_COUNTER (64)
+
 // power variables
-extern volatile uint8_t ui8_controller_duty_cycle_ramp_up_inverse_step;
-extern volatile uint8_t ui8_controller_duty_cycle_ramp_down_inverse_step;
-extern volatile uint16_t ui16_adc_voltage_cut_off;
 extern volatile uint8_t ui8_adc_battery_current_filtered;
-extern volatile uint8_t ui8_controller_adc_battery_current_target;
-extern volatile uint8_t ui8_g_duty_cycle;
-extern volatile uint8_t ui8_fw_hall_counter_offset;
-extern volatile uint8_t ui8_fw_hall_counter_offset_max;
-extern volatile uint8_t ui8_field_weakening_enabled;
 extern volatile uint16_t ui16_hall_counter_total;    
-extern volatile uint8_t ui8_controller_duty_cycle_target;
 extern volatile uint16_t ui16_hall_calib_cnt[6];
 extern uint8_t ui8_hall_ref_angles[8];  // was 6 in tsdz2
 extern const uint8_t ui8_hall_counter_offsets[8]; // was 6 in tsdz2
 extern volatile uint8_t ui8_hall_sensors_state;
 
 // Sensors
-extern volatile uint8_t ui8_brake_state;
-extern volatile uint16_t ui16_adc_voltage;
 extern volatile uint16_t ui16_adc_torque;
-extern volatile uint16_t ui16_adc_throttle;
 
-extern volatile uint16_t ui16_adc_torque_filtered  ; 
-extern volatile uint16_t ui16_adc_torque_actual_rotation ;
-extern volatile uint16_t ui16_adc_torque_previous_rotation ;
-extern volatile uint8_t ui8_adc_torque_rotation_reset ;
-
-extern volatile uint8_t ui8_pas_new_transition;
-
-// cadence sensor
-extern volatile uint16_t ui16_cadence_sensor_ticks;
-
-// wheel speed sensor
-extern volatile uint16_t ui16_wheel_speed_sensor_ticks;
-extern volatile uint32_t ui32_wheel_speed_sensor_ticks_total;
-
-// battery soc
-extern volatile uint8_t ui8_battery_SOC_saved_flag;
-extern volatile uint8_t ui8_battery_SOC_reset_flag;
-
-// end of code copied from TSDZ2
-
-// added by ms because used in ebike_app.c
-extern volatile uint8_t ui8_g_foc_angle;
-extern uint8_t ui8_foc_angle_multiplicator;
 
 // added by mstrens because defined in ebike_app.c and used in motor.c
 extern uint8_t ui8_adc_battery_overcurrent;
@@ -66,16 +41,7 @@ extern uint8_t ui8_adc_battery_overcurrent;
 #if ( GENERATE_DATA_FOR_REGRESSION_ANGLES == (1) )
 extern uint16_t ticks_intervals[8]; // ticks intervals between 2 pattern changes;
 extern uint8_t ticks_intervals_status; // 0 =  new data can be written; 1 data being written; 2 all data written, must be transmitted
-extern uint16_t previous_hall_pattern_change_ticks;  // save the ticks of last pattern change
 #endif
-
-#define AVERAGING_SIZE 64
-typedef struct {
-    uint32_t buffer[AVERAGING_SIZE];
-    int index;
-    int count;
-    uint32_t sum;
-} Moving_average;
 
 void CCU80_0_IRQHandler(); // called when ccu8 Slice 4 reaches 840  counting UP (= 1/4 of 19mhz cycles)
 void CCU80_1_IRQHandler(); // called when ccu8 Slice 4 reaches 840  counting DOWN (= 1/4 of 19mhz cycles)
@@ -88,7 +54,7 @@ void update_shadow_pattern(uint8_t current_pattern);
 void motor_enable_pwm(void) ;
 void motor_disable_pwm(void) ;
 
-void get_hall_pattern();
+void get_curr_hall_pattern();
 
 void set_rotor_angle( uint8_t angle, uint8_t duty_cycle);
 
@@ -99,3 +65,64 @@ void log_hall_sensor_position();
 uint16_t get_current_adc_10bits();
 
 uint32_t calculate_average_angle(uint8_t pattern);
+
+void update_foc_pid();
+
+void update_foc_optimiser(void);
+
+//__RAM_FUNC static inline void calculate_id_part1();
+
+//__RAM_FUNC static inline void calculate_id_part2();
+
+void hall_calibrate();
+void hall_positions_init();
+
+void capture_3_phase_current_offset();
+
+
+void pll_init(void);
+void pll_on_pwm_tick(void);
+void pll_on_hall_event(uint16_t dt_us, uint16_t hall_phase_q8_8, uint16_t ui16_angle_between_2_hall_fronts_q8_8,bool seq_ok);
+uint16_t pll_get_angle_q8_8(void);
+uint16_t pll_get_erps(void);
+uint32_t pll_get_velocity(void);
+uint32_t pll_get_rpm(void);
+
+//extern volatile uint16_t ui16_g_foc_angle_q8_8; // not used anymore with optimised lead angle in systick.c
+extern uint32_t ui32_hall_velocity_q8_8X1024;
+
+extern int32_t i32_id_sum ;
+extern int32_t i32_iq_sum ;
+extern uint8_t ui8_id_iq_counter ;
+
+// for security checks ; shared with systicks
+extern volatile uint32_t ui32_Iu_rms_2_filt;
+extern volatile uint32_t ui32_Iv_rms_2_filt;
+extern volatile uint32_t ui32_Iw_rms_2_filt;
+extern volatile uint32_t ui32_Imotor_rms_2_filt;
+// Flags fault shared with ebike_app.c
+extern volatile bool fault_phase_current_peak;
+extern volatile bool fault_idc_fast;
+
+
+
+extern volatile int32_t debug_id ;
+extern volatile int32_t debug_iq ;
+
+extern volatile int32_t debug_Iu;
+extern volatile int32_t debug_Iv;
+extern volatile int32_t debug_Iw;
+extern volatile int32_t debug_Iuvw;
+
+extern volatile int32_t debug_va ; // to debug
+extern volatile int32_t debug_vb ; // to debug
+extern volatile int32_t debug_vc ;  // to debug
+extern volatile int32_t debug_Ialpha;
+extern volatile int32_t debug_Ibeta;
+extern volatile int32_t debug_angle;
+
+extern volatile int32_t debug_foc; 
+
+extern int32_t debug_raw_id;
+extern int32_t debug_raw_iq;
+

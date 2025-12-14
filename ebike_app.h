@@ -28,6 +28,8 @@ extern volatile uint16_t ui16_adc_motor_phase_current_max;
 // Motor enabled
 extern uint8_t ui8_motor_enabled;
 
+
+extern uint8_t ui8_pwm_duty_cycle_max;
 typedef struct  _configuration_variables
 {
   //uint8_t ui8_motor_power_x10; // not used
@@ -79,7 +81,7 @@ uint16_t read_battery_soc(void);
 //static void calc_oem_wheel_speed(void);
 //static void ebike_control_lights(void);
 
-
+// used only in VLCD5 version
 void fillRxBuffer();
 void uart_receive_package();
 void uart_send_package();

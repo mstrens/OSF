@@ -14,6 +14,7 @@
 #include "common.h"
 #include "eeprom.h"
 #include "adc.h"
+#include "systick.h"
 
 volatile struct_configuration_variables m_configuration_variables;
 
@@ -93,7 +94,7 @@ static uint8_t ui8_duty_cycle_ramp_down_inverse_step_default = PWM_DUTY_CYCLE_RA
 static uint16_t ui16_battery_voltage_filtered_x1000 = 0;
 static uint16_t ui16_battery_no_load_voltage_filtered_x10 = 0;
 static uint8_t ui8_battery_current_filtered_x10 = 0;
- //uint16_t ui16_adc_battery_voltage_filtered = 0;
+static uint16_t ui16_adc_battery_voltage_filtered = 0;
 uint8_t ui8_adc_battery_current_max = ADC_10_BIT_BATTERY_CURRENT_MAX; // In tdsz2 it was 112 = 18A; it is updated by the program based on riding mode parameters
 static uint8_t ui8_adc_battery_current_target = 0;
 static uint8_t ui8_duty_cycle_target = 0;
@@ -285,7 +286,9 @@ uint16_t ui16_adc_pedal_torque_delta_to_remap = 0;
 uint16_t ui16_adc_pedal_torque_delta_remapped = 0;
 int i32_adc_pedal_torque_delta_expo = 0;
 
-
+uint16_t ui16_adc_throttle;
+// added by mstrens in order to allow changes in ucPorobe for testing with different speed  and same load
+uint8_t ui8_pwm_duty_cycle_max = PWM_DUTY_CYCLE_MAX;
 // added by mstrens for using testing mode
 uint8_t ui8_test_mode_flag = DEFAULT_TEST_MODE_FLAG ; // can be changed in uc_probe
 uint8_t ui8_battery_current_target_testing = DEFAULT_BATTERY_CURRENT_TARGET_TESTING_A ; // value is in A ; this is a default value that can be changed with uc_probe
@@ -296,8 +299,8 @@ uint32_t ui32_battery_current_mA_acc =0;
 uint32_t ui32_battery_current_mA_cnt = AVERAGING_CNT;
 uint32_t ui32_battery_current_mA_avg = 0;
 
-uint32_t ui32_current_1_rotation_ma = 0; // average current over 1 electric rotation
 
+uint32_t ui32_current_1_rotation_ma = 0; // average current over 1 electric rotation
 	
 
 // system functions
@@ -337,7 +340,7 @@ uint16_t calc_battery_soc_x10(uint16_t ui16_battery_soc_offset_x10, uint16_t ui1
 
 	
 
-// ********************* init ******************************
+// ********************* init used only in VLCD5 version******************************
 void ebike_app_init(void)
 {
 	// minimum value for these displays
@@ -475,14 +478,14 @@ void ebike_app_controller(void) // is called every 25ms by main()
 	// > 0X8000 = >32000 ; *4 usec = 0,131 sec per electric rotation ; for TSDZ2 * 8 = 1 sec per rotation = 60 rotations mecanical /sec
 	// normally this should not happens because there is already a check in motor.c that set ui16_hall_counter_total = 0xffff when enlapsed time is more than a value
 	// So, we should not exceed a uint16_t variable
-	if ((ui16_hall_counter_total >= 0xF000 ) || (ui16_hall_counter_total < 10)) {
-        ui16_motor_speed_erps = 0;  // speed is 0 if number of ticks is to high
-    }
-	else 
-	{
+	
+	//if ((ui16_hall_counter_total >= 0xF000 ) || (ui16_hall_counter_total < 10)) {
+    //    ui16_motor_speed_erps = 0;  // speed is 0 if number of ticks is to high
+    //} else {
         //ui16_motor_speed_erps = (uint16_t)(HALL_COUNTER_FREQ >> 2) / (uint16_t)(ui16_tmp >> 2); // 250000/nrOfTicks; so in sec
-		ui16_motor_speed_erps = ((uint32_t) HALL_COUNTER_FREQ) / ui16_hall_counter_total; // 250000/nrOfTicks; so rotation in sec
-	}
+	//	ui16_motor_speed_erps = ((uint32_t) HALL_COUNTER_FREQ) / ui16_hall_counter_total; // 250000/nrOfTicks; so rotation in sec
+	//}
+	ui16_motor_speed_erps = pll_get_erps(); // speed is calculated in PLL based on interval between 2 hall front (usually with pll correction)
 	// calculate the wheel speed
 	calc_wheel_speed();
 	
@@ -516,7 +519,18 @@ void ebike_app_controller(void) // is called every 25ms by main()
 			break;
 		case 3:
 			check_system();
+			hall_calibrate();  // calibrate the hall position (using result of data saved by ISR when speed is high enough)
+
 			check_battery_soc();
+						/*
+			// added by mstrens
+			ui8_best_ref_angles[1] = ui8_best_ref_angles1;
+			ui8_best_ref_angles[2] = ui8_best_ref_angles2;
+			ui8_best_ref_angles[3] = ui8_best_ref_angles3;
+			ui8_best_ref_angles[4] = ui8_best_ref_angles4;
+			ui8_best_ref_angles[5] = ui8_best_ref_angles5;
+			ui8_best_ref_angles[6] = ui8_best_ref_angles6; 			break;
+			*/
 			break;
 	}
 	
@@ -532,11 +546,11 @@ void ebike_app_controller(void) // is called every 25ms by main()
 
      ------------------------------------------------------------------------*/
 	// for debugging
-	debug1 = ui8_best_ref_angles[2];
-	debug2 = ui8_best_ref_angles[3];
-	debug3 = ui8_best_ref_angles[4];
-	debug4 = ui8_best_ref_angles[5];
-	debug5 = ui8_best_ref_angles[6];
+	//debug1 = ui8_best_ref_angles[2];
+	//debug2 = ui8_best_ref_angles[3];
+	//debug3 = ui8_best_ref_angles[4];
+	//debug4 = ui8_best_ref_angles[5];
+	//debug5 = ui8_best_ref_angles[6];
 	
 	#if ( GENERATE_DATA_FOR_REGRESSION_ANGLES == (1) )
 	// allow to calculate the regressions for each interval; 
@@ -606,8 +620,8 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 		}	
 		// set duty cycle target to the tesing value and check against max
 		ui8_duty_cycle_target = ui8_duty_cycle_target_testing;
-		if (ui8_duty_cycle_target >= PWM_DUTY_CYCLE_MAX ) {
-			ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;  
+		if (ui8_duty_cycle_target >= ui8_pwm_duty_cycle_max ) {
+			ui8_duty_cycle_target = ui8_pwm_duty_cycle_max;  
 		}
 		ui8_riding_mode_parameter =  50; // if it is set on 0 , it means that there is no assist and motor stays/goes off in safety checks
 		ui8_duty_cycle_ramp_up_inverse_step = DEFAULT_RAMP_UP_INVERSE_TESTING;
@@ -638,46 +652,23 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 	// For 10 A, TSDZ8 shoud give 10*24,576 steps
 	// to convert TSDZ8 steps in the same units as TSDZ2, we shoud take ADC *62/245,76 = 0,25 and divide by 4 (or >>2)
 	// current is available in gr0 ch1 result 8 in queue 0 p2.8 and/or in gr0 ch0 result in 12 (p2.8)
-	// here we take the average of the 2 conversions and so we should use >>3 instead of >>2
-	// Still due to IIR filtering, we have to add >>2 because it is returned in 14 bits instead of 12
 	
-	//uint8_t ui8_temp_adc_current = ((XMC_VADC_GROUP_GetResult(vadc_0_group_0_HW , 15 ) & 0xFFFF) +
-	//								(XMC_VADC_GROUP_GetResult(vadc_0_group_1_HW , 15 ) & 0xFFFF)) >>5  ;  // >>2 for IIR, >>2 for ADC12 to ADC10 , >>1 for averaging		
-	// changed by mstrens to take care of infineon init for vadc (result 12bits and in reg 1)
-	uint16_t ui16_temp_adc_current = (XMC_VADC_GROUP_GetResult(vadc_0_group_0_HW , VADC_I4_RESULT_REG ) & 0xFFFF) >> 2;// from 12 to 10bits 
-	//if ( ui8_temp_adc_current > ui8_adc_battery_overcurrent){ // 112+50 in tsdz2 (*0,16A) => 26A
-	//	ui8_error_battery_overcurrent = ERROR_BATTERY_OVERCURRENT ;
-	//} 
-
-	/*
-    // Read in assembler to ensure data consistency (conversion overrun)
-	// E07 (E04 blinking for XH18)
-	#ifndef __CDT_PARSER__ // avoid Eclipse syntax check
-	__asm
-        ld a, 0x53eb // ADC1->DB5RL
-		cp a, _ui8_adc_battery_overcurrent
-		jrc 00011$
-		mov _ui8_error_battery_overcurrent+0, #ERROR_BATTERY_OVERCURRENT
-	00011$:
-	__endasm;
-	#endif
-    */
-
-   	// modified by mstrens (a reset was missing)
+	// modified by mstrens (a reset was missing; we use the filtered value (based on moving average))
 	if (m_config.overcurrent_delay > 0) {  // OVERCURRENT_DELAY
-		if ( ui16_temp_adc_current > (uint16_t) ui8_adc_battery_overcurrent){ // 112+50 in tsdz2 (*0,16A) => 26A
+		if ( ui8_adc_battery_current_filtered > ui8_adc_battery_overcurrent){ // 112+50 in tsdz2 (*0,16A) => 26A
 			ui8_error_battery_overcurrent_counter++;
 		} else {
 			ui8_error_battery_overcurrent_counter = 0;
 		}
-		if (ui8_error_battery_overcurrent_counter >= OVERCURRENT_DELAY) {
+		if (ui8_error_battery_overcurrent_counter >= OVERCURRENT_DELAY) { // OVERCURRENT_DELAY refers to m_config
 			ui8_system_state = ERROR_BATTERY_OVERCURRENT;
 		}
 	} // endif
-	
+	// added by mstrens to use also checks done in motor.c (in ISR) that are only to protect controller (does not take care of user parameter in congig or 860c setup)
+	if (fault_phase_current_peak || fault_idc_fast) ui8_system_state = ERROR_BATTERY_OVERCURRENT ;
+
 	// for debug
 	// calculate an average in mA (to find parameters giving lowest current)
-	//ui32_current_1_rotation_ma = (ui32_adc_battery_current_1_rotation_15b * 10 * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) >> 5;
 	ui32_current_1_rotation_ma = (ui8_adc_battery_current_filtered * 10 * BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100) ;
 	
 	ui32_battery_current_mA_acc += ui32_current_1_rotation_ma;
@@ -720,6 +711,11 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
             ui8_adc_battery_current_target = ui8_adc_battery_current_max;
         }
 
+        // limit target duty cycle if higher than max value
+        if (ui8_duty_cycle_target > ui8_pwm_duty_cycle_max) {
+            ui8_duty_cycle_target = ui8_pwm_duty_cycle_max;
+        }
+
 		// limit target duty cycle ramp up inverse step if lower than min value (safety)
         if (ui8_duty_cycle_ramp_up_inverse_step < PWM_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_MIN) {
             ui8_duty_cycle_ramp_up_inverse_step = PWM_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_MIN;
@@ -754,7 +750,7 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 			|| (ui8_battery_SOC_saved_flag)
 			|| ((ui16_motor_speed_erps == 0)
 				&& (ui8_adc_battery_current_target == 0U)
-				&& (ui8_g_duty_cycle == 0U)))) {
+				&& (ui16_g_duty_cycle == 0U)))) {
         ui8_motor_enabled = 0;
         motor_disable_pwm();
     }
@@ -763,12 +759,7 @@ static void ebike_control_motor(void) // is called every 25ms by ebike_app_contr
 			&& (ui16_motor_speed_erps < ERPS_SPEED_OF_MOTOR_REENABLING) // enable the motor only if it rotates slowly or is stopped
 			&& (ui8_adc_battery_current_target > 0U)) {
 		ui8_motor_enabled = 1;
-		ui8_g_duty_cycle = 0;
-		//ui8_g_duty_cycle = PWM_DUTY_CYCLE_STARTUP;
-		//ui8_duty_cycle_ramp_up_inverse_step = PWM_DUTY_CYCLE_RAMP_UP_INVERSE_STEP_MIN;
-		//ui8_duty_cycle_ramp_down_inverse_step = PWM_DUTY_CYCLE_RAMP_DOWN_INVERSE_STEP_MIN;
-		ui8_fw_hall_counter_offset = 0;
-		motor_enable_pwm();
+		motor_enable_pwm(); // other actions are done here like reset pll timeout, reset fw, reset duty cycle
 	}
 }
 
@@ -884,8 +875,6 @@ static void apply_power_assist(void)
     uint32_t ui32_power_assist_x100 = (((uint32_t)(ui8_pedal_cadence_RPM * ui8_power_assist_multiplier_x50))
 					* ui32_pedal_torque_x100) >> 8; // see note below ; IN tsdz2, it is 9; with 8 we can double the current for the same level
 
-	
-
     /*------------------------------------------------------------------------
 
      NOTE: regarding the human power calculation
@@ -935,7 +924,7 @@ static void apply_power_assist(void)
 	
     // set duty cycle target
     if (ui8_adc_battery_current_target) {
-        ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
+			ui8_duty_cycle_target = ui8_pwm_duty_cycle_max;
     }
 	else {
         ui8_duty_cycle_target = 0;
@@ -1002,14 +991,13 @@ static void apply_power_assist(void)
 
 		// set duty cycle target
         if (ui8_adc_battery_current_target) {
-            ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
+            ui8_duty_cycle_target = ui8_pwm_duty_cycle_max;
         }
 		else {
             ui8_duty_cycle_target = 0;
         }
     }
 }// at this point, ui8_adc_battery_current_target is set and ui8_duty_cycle_target is 255 (or 0)
-
 
  static void apply_cadence_assist(void)
 {
@@ -1024,6 +1012,7 @@ static void apply_power_assist(void)
 		}
 		apply_smooth_start();
 		ui8_smooth_start_counter_set = ui8_smooth_start_counter_set_temp;   		
+		
         // set cadence assist current target
 		uint16_t ui16_adc_battery_current_target_cadence_assist = ui16_adc_pedal_torque_delta;
 		
@@ -1043,7 +1032,7 @@ static void apply_power_assist(void)
 		
 		// set duty cycle target
         if (ui8_adc_battery_current_target) {
-            ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
+            ui8_duty_cycle_target = ui8_pwm_duty_cycle_max;
         }
 		else {
             ui8_duty_cycle_target = 0;
@@ -1118,7 +1107,7 @@ static void apply_power_assist(void)
 		
         // set duty cycle target
         if (ui8_adc_battery_current_target) {
-            ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
+            ui8_duty_cycle_target = ui8_pwm_duty_cycle_max;
         }
 		else {
             ui8_duty_cycle_target = 0;
@@ -1159,7 +1148,7 @@ static void apply_power_assist(void)
 			uint8_t ui8_torque_assist_factor = ui8_riding_mode_parameter_array[TORQUE_ASSIST_MODE - 1][ui8_assist_level];
 		
 			// calculate torque assist target current
-			ui16_adc_battery_current_target_torque_assist = (ui16_adc_pedal_torque_delta * ui8_torque_assist_factor) / TORQUE_ASSIST_FACTOR_DENOMINATOR;
+			ui16_adc_battery_current_target_torque_assist = ((uint16_t) ui16_adc_pedal_torque_delta * ui8_torque_assist_factor) / TORQUE_ASSIST_FACTOR_DENOMINATOR;
 		}
 		else {
 			ui16_adc_battery_current_target_torque_assist = 0;
@@ -1168,7 +1157,7 @@ static void apply_power_assist(void)
 		// calculate power assistance
 		// get the power assist multiplier
 		uint8_t ui8_power_assist_multiplier_x50 = ui8_riding_mode_parameter;
-		// calculate torque on pedals
+		// calculate torque on pedals //mstrens : seems only in VLCD5 version
 		uint16_t ui16_pedal_torque_x100 = ui16_adc_pedal_torque_delta * ui8_pedal_torque_per_10_bit_ADC_step_x100;
 		// calculate power assist by multiplying human power with the power assist multiplier
 		uint32_t ui32_power_assist_x100 = (((uint32_t)(ui8_pedal_cadence_RPM * ui8_power_assist_multiplier_x50))
@@ -1214,7 +1203,7 @@ static void apply_power_assist(void)
 		
 		// set duty cycle target
 		if (ui8_adc_battery_current_target) {
-			ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
+			ui8_duty_cycle_target = ui8_pwm_duty_cycle_max;
 		}
 		else {
 			ui8_duty_cycle_target = 0;
@@ -1563,7 +1552,7 @@ static void apply_throttle(void)
     // changed by mstrens to take care of infineon init
 	ui16_adc_throttle = (XMC_VADC_GROUP_GetResult(vadc_0_group_1_HW , VADC_POT_RESULT_REG ) & 0x0FFF) >> 2; // throttle gr1 ch7 result 7  in bg  p2.5
 	// map adc value from 0 to 255
-	    
+	// here the 4 values refers to m_config values
     ui8_throttle_adc_in = map_ui8((uint8_t)(ui16_adc_throttle >> 2), // from 10 bits to 8 bits; then remap from 0 to 255
             (uint8_t) ADC_THROTTLE_MIN_VALUE, 
             (uint8_t) ADC_THROTTLE_MAX_VALUE, 
@@ -1631,7 +1620,7 @@ static void apply_throttle(void)
 		}
 		
 		// set duty cycle target
-		ui8_duty_cycle_target = PWM_DUTY_CYCLE_MAX;
+		ui8_duty_cycle_target = ui8_pwm_duty_cycle_max;
     }// end of current_target_trottle > current_target
 }
 
@@ -1681,17 +1670,17 @@ static void apply_speed_limit(void)
 	if (m_configuration_variables.ui8_wheel_speed_max > 0U) {
 		uint16_t speed_limit_low  = (uint16_t)((uint8_t)(m_configuration_variables.ui8_wheel_speed_max - 2U) * (uint8_t)10U); // casting literal to uint8_t ensures usage of MUL X,A
 		uint16_t speed_limit_high = (uint16_t)((uint8_t)(m_configuration_variables.ui8_wheel_speed_max + 2U) * (uint8_t)10U);
-				
+		// mstrens : light diff with 860C version		
+		if (ui16_wheel_speed_x10 > speed_limit_high) {
+			ui8_duty_cycle_target = 0;
+		}
+		
         // set battery current target
         ui8_adc_battery_current_target = (uint8_t)map_ui16(ui16_wheel_speed_x10,
                 speed_limit_low,
                 speed_limit_high,
                 ui8_adc_battery_current_target,
                 0U);
-		
-		if (ui16_wheel_speed_x10 > speed_limit_high) {
-			ui8_duty_cycle_target = 0;
-		}
     }   
 }
 
@@ -1699,8 +1688,8 @@ static void apply_speed_limit(void)
 static void calc_wheel_speed(void)
 {
     // calc wheel speed (km/h x10)
-    if (ui16_wheel_speed_sensor_ticks > 0U) {
-        uint16_t ui16_tmp = ui16_wheel_speed_sensor_ticks;
+	uint16_t ui16_tmp = ui16_wheel_speed_sensor_ticks; // copy the value from isr    
+    if (ui16_tmp) {
         // rps = PWM_CYCLES_SECOND / ui16_wheel_speed_sensor_ticks (rev/sec)
         // km/h*10 = rps * ui16_wheel_perimeter * ((3600 / (1000 * 1000)) * 10)
         // !!!warning if PWM_CYCLES_SECOND is not a multiple of 1000
@@ -1716,18 +1705,17 @@ static void calc_wheel_speed(void)
 	}	
 }
 
-
 static void calc_cadence(void)
 {
-    // get the cadence sensor ticks
+    // get the cadence sensor ticks from the ISR
     uint16_t ui16_cadence_sensor_ticks_temp = ui16_cadence_sensor_ticks;
 
     // adjust cadence sensor ticks counter min depending on wheel speed
     ui16_cadence_ticks_count_min_speed_adj = map_ui16(ui16_wheel_speed_x10,
             40,
             400,
-            CADENCE_SENSOR_CALC_COUNTER_MIN,
-            CADENCE_SENSOR_TICKS_COUNTER_MIN_AT_SPEED);
+            CADENCE_SENSOR_CALC_COUNTER_MIN / 19,            //4270
+            CADENCE_SENSOR_TICKS_COUNTER_MIN_AT_SPEED /19); //341
 
     // calculate cadence in RPM and avoid zero division
     // !!!warning if PWM_CYCLES_SECOND > 21845
@@ -1758,13 +1746,13 @@ static void calc_cadence(void)
      -------------------------------------------------------------------------------------------------*/
 	 // added by mstrens
 	 // we also calculate the ratio of decrease of cadence in order to allow faster reaction of assistance when pedal pressure reduce
-	 i16_pedal_cadence_RPM_decrease_ratio = 0;
-	 if ( ui8_pedal_cadence_RPM > 0){
-		int16_t i16_pedal_cadence_RPM_difference = (int16_t) ui8_pedal_cadence_RPM_previous - (int16_t) ui8_pedal_cadence_RPM;
-		if (i16_pedal_cadence_RPM_difference > 0) {
-			i16_pedal_cadence_RPM_decrease_ratio = (i16_pedal_cadence_RPM_difference << 8) / ui8_pedal_cadence_RPM;
-		} 
-	} 
+	// i16_pedal_cadence_RPM_decrease_ratio = 0;
+	// if ( ui8_pedal_cadence_RPM > 0){
+	//	int16_t i16_pedal_cadence_RPM_difference = (int16_t) ui8_pedal_cadence_RPM_previous - (int16_t) ui8_pedal_cadence_RPM;
+	//	if (i16_pedal_cadence_RPM_difference > 0) {
+	//		i16_pedal_cadence_RPM_decrease_ratio = (i16_pedal_cadence_RPM_difference << 8) / ui8_pedal_cadence_RPM;
+	//	} 
+	//} 
 	 ui8_pedal_cadence_RPM_previous = ui8_pedal_cadence_RPM;
 }
 
@@ -1787,7 +1775,8 @@ void get_battery_voltage(void)
     // low pass filter the voltage readed value, to avoid possible fast spikes/noise
     ui16_adc_battery_voltage_accumulated -= ui16_adc_battery_voltage_accumulated >> READ_BATTERY_VOLTAGE_FILTER_COEFFICIENT;
     ui16_adc_battery_voltage_accumulated += ui16_adc_voltage;
-	ui16_battery_voltage_filtered_x1000 = (ui16_adc_battery_voltage_accumulated >> READ_BATTERY_VOLTAGE_FILTER_COEFFICIENT) * BATTERY_VOLTAGE_PER_10_BIT_ADC_STEP_X1000;
+	ui16_adc_battery_voltage_filtered = ui16_adc_battery_voltage_accumulated >> READ_BATTERY_VOLTAGE_FILTER_COEFFICIENT;
+    ui16_battery_voltage_filtered_x1000 = ui16_adc_battery_voltage_filtered * BATTERY_VOLTAGE_PER_10_BIT_ADC_STEP_X1000;
 }
 
 //in openTX expo : f(x) = (k*x*x*x/(1024*1024) + x*(256-k) + 128) / 256 ; k is between 0 and 256, x is between 0 and 1024
@@ -2138,17 +2127,19 @@ static uint16_t ui16_adc_pedal_torque_noExpo;
 		}
 		*/
 		
+		// was used only when katana and spider was not used
 		// When cadence decrease ratio exceed some value, we reset the current and previous Max rotation value
 		// max cadence is 120; so max cadence decrease ratio is (120-1)*256/(120+1) = 256
 		// (2-1)*256/1 = 256
 		// (110-90)*256/100 = 25
-		#define CADENCE_DECREASE_RATIO 25
-		if (i16_pedal_cadence_RPM_decrease_ratio > CADENCE_DECREASE_RATIO) {
-			ui16_adc_torque_actual_rotation = 0;
-			ui16_adc_torque_previous_rotation = 0 ;
-			ui8_adc_torque_rotation_reset = 1 ; // will force also a reset in the motor.c irq to be safe and reset rpm counter
-		}
+ 		//#define CADENCE_DECREASE_RATIO 25
+		//if (i16_pedal_cadence_RPM_decrease_ratio > CADENCE_DECREASE_RATIO) {
+		//	ui16_adc_torque_actual_rotation = 0;
+		//	ui16_adc_torque_previous_rotation = 0 ;
+		//	ui8_adc_torque_rotation_reset = 1 ; // will force also a reset in the motor.c irq to be safe and reset rpm counter
+		//}
 
+		/*
 		// get adc pedal torque
 		// by default we use ui16_adc_torque_filtered (calculated in motor.c irq)
 		// when cadence is high enough, we use the max between actual value, actual rotation and previous rotation
@@ -2162,6 +2153,7 @@ static uint16_t ui16_adc_pedal_torque_noExpo;
 			ui8_adc_torque_rotation_reset = 1 ; // will force also a reset of torque rotation in the motor.c irq and so we use the actual value 
 		}
 		#endif
+		*/
 	}
 
 	// here we know the ui16_adc_pedal_torque but we still have to take care of 
@@ -2185,6 +2177,7 @@ static uint16_t ui16_adc_pedal_torque_noExpo;
 		uint8_t katana_factor = 16;
 		if (ui16_adc_pedal_torque_delta_160 > ui16_adc_pedal_torque_noExpo) katana_dif = ui16_adc_pedal_torque_delta_160 - ui16_adc_pedal_torque_noExpo;
 		else katana_dif = ui16_adc_pedal_torque_noExpo - ui16_adc_pedal_torque_delta_160;
+		
 		if (katana_dif < 60) katana_factor = 1;
 		else if (katana_dif < 80) katana_factor = 2;
 		else if (katana_dif < 100) katana_factor = 4;
@@ -3895,7 +3888,9 @@ void uart_send_package(){
 					ui16_display_data = ui16_display_data_factor / ui16_motor_speed_erps;
 				  break;
 				case 12:
-					ui16_duty_cycle_percent = (uint16_t) ((ui8_g_duty_cycle * (uint8_t)100) / PWM_DUTY_CYCLE_MAX) - 1;
+					// added by mstrens because g_duty_cycle is now in 16 bits
+					uint16_t temp_duty_cycle = (ui16_g_duty_cycle + 0x80) >> 8; // rounding
+					ui16_duty_cycle_percent = (uint16_t) ((temp_duty_cycle * (uint8_t)100) / PWM_DUTY_CYCLE_MAX) - 1;
 					ui16_display_data = (ui16_display_data_factor / ui16_duty_cycle_percent) * 10U;
 				  break;
 				default:
@@ -3958,7 +3953,8 @@ void uart_send_package(){
 					ui8_working_status &= 0x7F;
 			}
 			// motor working
-			if (ui8_g_duty_cycle > 10) {
+			// Mstrens : modified because g_duty_cycle is now in 16 bits
+			if (ui16_g_duty_cycle > (10 << 8)) {
 				// bit6 = 1 (motor working)
 				ui8_working_status |= 0x40;
 			}

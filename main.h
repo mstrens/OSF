@@ -1,3 +1,4 @@
+// OSF for TSDZ8 on VLCD5
 /*
  * TongSheng TSDZ2 motor controller firmware/
  *
@@ -12,7 +13,7 @@
 #include "config_tsdz8.h"
 #include "common.h"
 
-#define FIRMWARE_VERSION "0.1.35"      // 22/03/25 12h30 is not used; just for reference)
+#define FIRMWARE_VERSION "0.2.1"      // based on test6 with pll for 860C
 #define MAIN_CONFIGURATOR_VERSION 6  // for configurator (must be the same as in javaconfigurator TSDZ8_header.ini file)
 #define SUB_CONFIGURATOR_VERSION  0    // is not used (just for reference)
 
@@ -45,12 +46,14 @@
 #define TESTING_MODE 1    // motor is controlled by a few set up defined in uc_probe
 
 #define GENERATE_DATA_FOR_REGRESSION_ANGLES (0) // 1 to let irq0 generate intervals to apply regtression and calculate best angles
-#define uCPROBE_GUI_OSCILLOSCOPE MY_DISABLED // MY_ENABLED
 
-#define USE_IRQ_FOR_HALL (0) // 1 = use irq; 0 = use capture
+#define MY_ENABLED 1
+#define MY_DISABLED 0
+#define uCPROBE_GUI_OSCILLOSCOPE MY_DISABLED //MY_DISABLED // MY_ENABLED
+
 
 // note when USE_SPIDER_LOGIC_FOR_TORQUE > 0, KATANA logic is not used; to use KATANA, USE_SPIDER must be 0
-#define USE_SPIDER_LOGIC_FOR_TORQUE (0) // (1) = use Spider logic with a buffer of 20 value over one rotation.
+#define USE_SPIDER_LOGIC_FOR_TORQUE (3) // (1) = use Spider logic with a buffer of 20 value over one rotation.
                                         // (2) = mstrens variant using "expected" concept + smoothing
                                         // (3) = Spider logic, no reset of buffer when torque = 0, avg when less than 20.
 #define USE_KATANA1234_LOGIC_FOR_TORQUE (2) // (1) = use katana with an average of n last value; big changes getting more priority 
@@ -65,17 +68,24 @@
 // those rules apply only when rotor rotation speed is fast enough otherwise we use "normal positioning"
 // Normal positionning means that extrapolation is based on each pattern change and on speed on last 360°
 
+//#define DYNAMIC_LEAD_ANGLE      (0)   // (0) no dynamic
+                                      // (1) dynamic based on Id and a PID + optimiser 
+                                      // (2) dynamic based on Idc and a optimiser (= esc) 
+
+#define USE_INT_LUT (1)      // (0) use unsigned LUT for sinus
+                            // (1) use signed
 
 // *************** from here we have more general parameters 
 
 // this value can be optimized using uc_probe and changing slightly the "global offset angle" in order to get the lowest measured current for a given duty cycle 
-#define DEFAULT_HALL_REFERENCE_ANGLE 66
+#define DEFAULT_HALL_REFERENCE_ANGLE 60 // 60 is the value when 256 = 360°, So it is about 60*360/256 = 86°
+    // value has been reduced from 66 to 60 when lead angle base is calculated with a table depening on velocity
 //#define MID__RISING_FALLING_EDGE_HALL_SENSOR 5 // half difference between first and second 180 ticks interval 
 #define FINE_TUNE_ANGLE_OFFSET 0 // to change a little hall reference angle
 // for CCU4 slice 2
-#define HALL_COUNTER_FREQ                       250000U // 250KHz or 4us
+#define HALL_COUNTER_FREQ                      1000000 //it was 250000U // 250KHz or 4us ; now 1Mhz for more acuuracy
 
-#define PWM_DUTY_CYCLE_MAX                      254     
+#define PWM_DUTY_CYCLE_MAX                      254//254     128 to test hafl power and see if iu, iv, iw are ok
 #define PWM_DUTY_CYCLE_STARTUP	                30    // Initial PWM Duty Cycle at motor startup
 
 
@@ -87,7 +97,7 @@
 // wheel speed parameters
 #define OEM_WHEEL_SPEED_DIVISOR			384 // at 19 KHz
 
-#define PWM_CYCLES_SECOND			(64000000/(PWM_COUNTER_MAX*2)) // 55.5us (PWM period) 18 Khz // for TSDZ2, it was 16000000
+#define PWM_CYCLES_SECOND			(64000000/(PWM_COUNTER_MAX*2)) // 19000 = 55.5us (PWM period) 18 Khz // for TSDZ2, it was 16000000
 
 /*---------------------------------------------------------
  NOTE: regarding duty cycle (PWM) ramping
@@ -116,7 +126,7 @@
 #define MOTOR_OVER_SPEED_ERPS	1300 
 
 // for TSDZ2
-//#define MOTOR_SPEED_FIELD_WEAKENING_MIN			490 // 90 rpm it is to compare with erps 
+//#define MOTOR_SPEED_FIELD_WEAKENING_MIN			490 // 90 rpm
 //#define ERPS_SPEED_OF_MOTOR_REENABLING				320 // 60 rpm
 //For TSDZ8, I expect that it must be 2 * smaller for the same mecanical speed (4 poles instead of 8)
 #define MOTOR_SPEED_FIELD_WEAKENING_MIN				245 // 90 rpm
@@ -142,6 +152,8 @@
 #define WHEEL_SPEED_SENSOR_TICKS_COUNTER_MAX			(uint16_t)((uint32_t)PWM_CYCLES_SECOND*10U/1157U)   // 164 at 19 khz (135 at 15,625KHz) something like 200 m/h with a 6'' wheel
 #define WHEEL_SPEED_SENSOR_TICKS_COUNTER_MIN			(uint16_t)((uint32_t)PWM_CYCLES_SECOND*1000U/477U) // 32767@15625KHz could be a bigger number but will make for a slow detection of stopped wheel speed
 
+#define WHEEL_SPEED_SENSOR_SIMULATION	0 // 1 allows to avoid the error after 12 sec if motor runs but not the wheel sensor
+                                            // 0 do not simulate
 
 
 
@@ -188,8 +200,6 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 ****************************************
 */
 
-#define HALL_COUNTER_OFFSET_DOWN                (HALL_COUNTER_FREQ/PWM_CYCLES_SECOND/2 + 17)
-#define HALL_COUNTER_OFFSET_UP                  (HALL_COUNTER_OFFSET_DOWN + 21)
 #define FW_HALL_COUNTER_OFFSET_MAX              5 // 5*4=20us max time offset
 
 #define MOTOR_ROTOR_INTERPOLATION_MIN_ERPS      5 // it was 10 for tsdz2 that used 8 poles; tsdz8 uses 4 poles so erps is 2 smaller
@@ -225,8 +235,8 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 #endif
 
 // adc torque range parameters for remapping
-#define ADC_TORQUE_SENSOR_DELTA_ADJ				(uint16_t)((ADC_TORQUE_SENSOR_MIDDLE_OFFSET_ADJ * 2) - ADC_TORQUE_SENSOR_CALIBRATION_OFFSET - ADC_TORQUE_SENSOR_OFFSET_ADJ)
-#define ADC_TORQUE_SENSOR_RANGE_INGREASE_X100	(uint16_t)((ADC_TORQUE_SENSOR_RANGE_TARGET * 50) / ADC_TORQUE_SENSOR_RANGE)
+#define ADC_TORQUE_SENSOR_DELTA_ADJ			(uint16_t)((ADC_TORQUE_SENSOR_MIDDLE_OFFSET_ADJ * 2) - ADC_TORQUE_SENSOR_CALIBRATION_OFFSET - ADC_TORQUE_SENSOR_OFFSET_ADJ)
+#define ADC_TORQUE_SENSOR_RANGE_INGREASE_X100   	(uint16_t)((ADC_TORQUE_SENSOR_RANGE_TARGET * 50) / ADC_TORQUE_SENSOR_RANGE)
 #define ADC_TORQUE_SENSOR_ANGLE_COEFF			11
 #define ADC_TORQUE_SENSOR_ANGLE_COEFF_X10		(uint16_t)(ADC_TORQUE_SENSOR_ANGLE_COEFF * 10)
 
@@ -241,7 +251,7 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 #define PERCENT_TORQUE_SENSOR_RANGE_WITH_WEIGHT		75 // % of torque sensor range with weight
 #define ADC_TORQUE_SENSOR_TARGET_WITH_WEIGHT		(uint16_t)((ADC_TORQUE_SENSOR_RANGE_TARGET * PERCENT_TORQUE_SENSOR_RANGE_WITH_WEIGHT) / 100)
 
-#define ADC_TORQUE_SENSOR_DELTA_WITH_WEIGHT			(uint16_t)(((((ADC_TORQUE_SENSOR_TARGET_WITH_WEIGHT \
+#define ADC_TORQUE_SENSOR_DELTA_WITH_WEIGHT		(uint16_t)(((((ADC_TORQUE_SENSOR_TARGET_WITH_WEIGHT \
 * ADC_TORQUE_SENSOR_RANGE_TARGET_MIN) / ADC_TORQUE_SENSOR_RANGE_TARGET)	* (100 + PEDAL_TORQUE_ADC_RANGE_ADJ) / 100) \
 * (ADC_TORQUE_SENSOR_TARGET_WITH_WEIGHT - ADC_TORQUE_SENSOR_CALIBRATION_OFFSET + ADC_TORQUE_SENSOR_OFFSET_ADJ \
 - ((ADC_TORQUE_SENSOR_DELTA_ADJ * ADC_TORQUE_SENSOR_TARGET_WITH_WEIGHT) / ADC_TORQUE_SENSOR_RANGE_TARGET))) / ADC_TORQUE_SENSOR_TARGET_WITH_WEIGHT)
@@ -257,13 +267,13 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 // changed by mstrens to allow more power for the same level
 #define TORQUE_ASSIST_FACTOR_DENOMINATOR		60 // in tSDZ2, it is 120, reducing the value, increase the current for the same level
 
-// torque step mode
-#define TORQUE_STEP_DEFAULT							0 // not calibrated
-#define TORQUE_STEP_ADVANCED						1 // calibrated
-
 // smooth start ramp
 #define SMOOTH_START_RAMP_DEFAULT					165 // 35% (255=0% long ramp)
 #define SMOOTH_START_RAMP_MIN						30
+
+// torque step mode ; used only in VLCD5 version
+#define TORQUE_STEP_DEFAULT							0 // not calibrated
+#define TORQUE_STEP_ADVANCED						1 // calibrated
 
 // adc current (38 = 6A, 50 = 8A, 112 = 18A, 124 = 20A , 136 = 22A, 143 = 23A, 187 = 30A)
 #define ADC_10_BIT_BATTERY_EXTRACURRENT				50  //  8 amps
@@ -279,7 +289,7 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
  controller is 16 A and it should not be exceeded.
  ---------------------------------------------------------*/
 
-// throttle ADC values
+// throttle ADC values used only in 860C version
 //#define ADC_THROTTLE_MIN_VALUE					47
 //#define ADC_THROTTLE_MAX_VALUE					176
 
@@ -304,7 +314,13 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
  transitions. Depending on if all transitions are measured or simply
  transitions of the same kind it is important to adjust the calculation of
  pedal cadence.
- ---------------------------------------------------------------------------
+ --------------------------------------------------------------------------*/
+
+
+// default values used only in 860C version
+//#define DEFAULT_VALUE_BATTERY_CURRENT_MAX  10  // 10 amps Used only in 860C version
+
+/*---------------------------------------------------------
 
  NOTE: regarding the torque sensor output values
 
@@ -316,10 +332,11 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
  --------------------------------------------------------------------------*/
 
 // ADC battery voltage measurement
-#define BATTERY_VOLTAGE_PER_10_BIT_ADC_STEP_X1000		87  // conversion value verified with a cheap power meter
+#define BATTERY_VOLTAGE_PER_10_BIT_ADC_STEP_X1000		87  // conversion value verified with a cheap power meter = MVolt/adc10bit
+
 
 // ADC battery voltage to be subtracted from the cut-off
-#define DIFFERENCE_CUT_OFF_SHUTDOWN_10_BIT				100
+#define DIFFERENCE_CUT_OFF_SHUTDOWN_10_BIT			100  // 9 Volts
 
 /*---------------------------------------------------------
  NOTE: regarding ADC battery voltage measurement
@@ -335,8 +352,40 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 // ADC battery current measurement
 #define BATTERY_CURRENT_PER_10_BIT_ADC_STEP_X100		16  // 0.16A x 10 bit ADC step
 
+// walk assist
+//#define WALK_ASSIST_THRESHOLD_SPEED		        (uint8_t)(WALK_ASSIST_THRESHOLD_SPEED_X10 / 10)
+#define WALK_ASSIST_WHEEL_SPEED_MIN_DETECT_X10	42
+#define WALK_ASSIST_ERPS_THRESHOLD			    20
+#define WALK_ASSIST_ADJ_DELAY_MIN			     4
+#define WALK_ASSIST_ADJ_DELAY_STARTUP			10
+#define WALK_ASSIST_DUTY_CYCLE_MIN              40
+#define WALK_ASSIST_DUTY_CYCLE_STARTUP			50
+#define WALK_ASSIST_DUTY_CYCLE_MAX              130
+#define WALK_ASSIST_ADC_BATTERY_CURRENT_MAX      40
+
+
+
+// security checks added by mstrens (see use in systick.c and motor.c)
+#define PHASE_PEAK_ADC_NOMINAL     (800.0)     // not sure about the value; I do not know the shunt, gain of amp.
+                                              // // ADC is 12 bit = max 4096; offset is about 2048; So max is about 2048
+#define PHASE_PEAK_TRIP_RATIO       (2.2)      // disable the motor when this limit is reached (need a power off to reset)
+#define PHASE_RMS_WARN_RATIO       (1.8)       // reduce power during RAMP_UP_DELAY_TICKS (e.g. 2 sec)
+#define IMOTOR_RMS_WARN_RATIO       (1.5)      // reduce power during RAMP_UP_DELAY_TICKS (e.g. 2 sec)
+
+#define IDC_NOMINAL_AMPERE          (13.0)     // Amp
+#define IDC_FAST_TRIP_RATIO         (2.5)      // disable the motor when this limit is reached (need a power off to reset)
+#define IDC_SLOW_WARN_RATIO         (1.5)      // reduce power during RAMP_UP_DELAY_TICKS (e.g. 2 sec)
+
+#define RAMP_UP_DELAY_TICKS 2000  // 2000 ms Timer anti ramp up (avoid ramp up when soft error occured for some ms)
+
+// note : Systick.c contains also some set up for lead angle (table, steps, RPM, ...)
+
+
+
+
 // for oem display
 
+// next is used only in VLCD5 version (not in 860C)
 // UART
 #define UART_RX_BUFFER_LEN   		7
 #define RX_CHECK_CODE				(UART_RX_BUFFER_LEN - 1)															
@@ -539,16 +588,6 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 #define POWER_ASSIST_LEVEL_SPORT     (uint8_t)(POWER_ASSIST_LEVEL_3 / 2)
 #define POWER_ASSIST_LEVEL_TURBO     (uint8_t)(POWER_ASSIST_LEVEL_4 / 2)
 
-// walk assist
-//#define WALK_ASSIST_THRESHOLD_SPEED		        (uint8_t)(WALK_ASSIST_THRESHOLD_SPEED_X10 / 10)
-#define WALK_ASSIST_WHEEL_SPEED_MIN_DETECT_X10	42
-#define WALK_ASSIST_ERPS_THRESHOLD			    20
-#define WALK_ASSIST_ADJ_DELAY_MIN			     4
-#define WALK_ASSIST_ADJ_DELAY_STARTUP			10
-#define WALK_ASSIST_DUTY_CYCLE_MIN              40
-#define WALK_ASSIST_DUTY_CYCLE_STARTUP			50
-#define WALK_ASSIST_DUTY_CYCLE_MAX              130
-#define WALK_ASSIST_ADC_BATTERY_CURRENT_MAX      40
 
 /*
 // cruise threshold (speed limit min km/h x10)

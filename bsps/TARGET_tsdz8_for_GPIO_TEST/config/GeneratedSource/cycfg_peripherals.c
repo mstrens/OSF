@@ -31,6 +31,7 @@
 
 #define HALL_POSIF_HALPS(EP, CP) (((uint32_t)EP <<  3) | (uint32_t)CP)
 
+
 const XMC_CCU4_SLICE_COMPARE_CONFIG_t HALL_DELAY_TIMER_compare_config =
 {
     .timer_mode = XMC_CCU4_SLICE_TIMER_COUNT_MODE_EA,
@@ -65,6 +66,7 @@ const XMC_CCU4_SLICE_EVENT_CONFIG_t HALL_DELAY_TIMER_event2_config =
     .level = XMC_CCU4_SLICE_EVENT_LEVEL_SENSITIVITY_ACTIVE_HIGH,
     .duration = XMC_CCU4_SLICE_EVENT_FILTER_DISABLED,
 };
+
 const XMC_CCU4_SLICE_CAPTURE_CONFIG_t HALL_SPEED_TIMER_capture_config =
 {
     .fifo_enable = false,
@@ -72,10 +74,11 @@ const XMC_CCU4_SLICE_CAPTURE_CONFIG_t HALL_SPEED_TIMER_capture_config =
     .same_event = false,
     .ignore_full_flag = true,
     .prescaler_mode = XMC_CCU4_SLICE_PRESCALER_MODE_NORMAL,
-    .prescaler_initval = XMC_CCU4_SLICE_PRESCALER_256,
+    .prescaler_initval = XMC_CCU4_SLICE_PRESCALER_64, // for 250000 Hz, it was XMC_CCU4_SLICE_PRESCALER_256
     .float_limit = XMC_CCU4_SLICE_PRESCALER_32768,
     .timer_concatenation = false,
 };
+
 const XMC_CCU4_SLICE_EVENT_CONFIG_t HALL_SPEED_TIMER_event0_config =
 {
     .mapped_input = CCU40_IN1_EV0IS_VALUE,
@@ -760,8 +763,8 @@ void init_cycfg_peripherals(void)
     XMC_CCU4_Init(ccu4_0_HW, XMC_CCU4_SLICE_MCMS_ACTION_TRANSFER_PR_CR);
     XMC_CCU4_StartPrescaler(ccu4_0_HW);
     XMC_CCU4_SLICE_CompareInit(HALL_DELAY_TIMER_HW, &HALL_DELAY_TIMER_compare_config);
-    XMC_CCU4_SLICE_SetTimerCompareMatch(HALL_DELAY_TIMER_HW, 2U);
-    XMC_CCU4_SLICE_SetTimerPeriodMatch(HALL_DELAY_TIMER_HW, 4U);
+    XMC_CCU4_SLICE_SetTimerCompareMatch(HALL_DELAY_TIMER_HW, 5U); // it was 2
+    XMC_CCU4_SLICE_SetTimerPeriodMatch(HALL_DELAY_TIMER_HW, 10U);  // it was 4
     XMC_CCU4_SetMultiChannelShadowTransferMode(ccu4_0_HW, XMC_CCU4_MULTI_CHANNEL_SHADOW_TRANSFER_SW_SLICE0);
     XMC_CCU4_EnableShadowTransfer(ccu4_0_HW,
         XMC_CCU4_SHADOW_TRANSFER_SLICE_0 |
@@ -788,6 +791,8 @@ void init_cycfg_peripherals(void)
     XMC_CCU4_SLICE_ConfigureEvent(HALL_SPEED_TIMER_HW, XMC_CCU4_SLICE_EVENT_1, &HALL_SPEED_TIMER_event1_config);
     XMC_CCU4_SLICE_ConfigureEvent(HALL_SPEED_TIMER_HW, XMC_CCU4_SLICE_EVENT_2, &HALL_SPEED_TIMER_event2_config);
     XMC_CCU4_SLICE_Capture0Config(HALL_SPEED_TIMER_HW, XMC_CCU4_SLICE_EVENT_0);
+    //XMC_CCU4_SLICE_SetInterruptNode(HALL_SPEED_TIMER_HW, XMC_CCU4_SLICE_EVENT_0, XMC_CCU4_SLICE_SR_ID_0); // added by mstrens to get an irq (even not activated in nivq)
+    //XMC_CCU4_SLICE_EnableEvent(HALL_SPEED_TIMER_HW, XMC_CCU4_SLICE_EVENT_0); // added by mstrens to get an irq
     XMC_CCU4_EnableClock(ccu4_0_HW, HALL_SPEED_TIMER_NUM);
     XMC_CCU4_SLICE_SetTimerValue(HALL_SPEED_TIMER_HW, 0U);
     XMC_CCU4_SLICE_StartTimer(HALL_SPEED_TIMER_HW);
@@ -812,7 +817,17 @@ void init_cycfg_peripherals(void)
     
     XMC_CCU8_SLICE_CompareInit(PHASE_U_TIMER_HW, &PHASE_U_TIMER_compare_config);
     XMC_CCU8_SLICE_SetTimerCompareMatchChannel1(PHASE_U_TIMER_HW, 840U);
-    XMC_CCU8_SLICE_SetTimerCompareMatchChannel2(PHASE_U_TIMER_HW, 0U);
+    XMC_CCU8_SLICE_SetTimerCompareMatchChannel2(PHASE_U_TIMER_HW, 0U); // original code
+// modified by mstrens to get a trigger for VADC based on compare value of channel 2
+//XMC_CCU8_SLICE_SetTimerCompareMatchChannel2(PHASE_U_TIMER_HW, 1678U); // trigger just after mid point (to test)
+// Router cet événement vers le service request 0 (SR0)
+//XMC_CCU8_SLICE_SetInterruptNode(PHASE_U_TIMER_HW,
+//                                XMC_CCU8_SLICE_IRQ_ID_COMPARE_MATCH_DOWN_CH_2,
+//                                XMC_CCU8_SLICE_SR_ID_3);
+// Activer l’événement de compare-match sur CH2 (sur comptage montant)
+//XMC_CCU8_SLICE_EnableEvent(PHASE_U_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_COMPARE_MATCH_DOWN_CH_2);
+
+
     XMC_CCU8_SLICE_SetTimerPeriodMatch(PHASE_U_TIMER_HW, 1680U);
     XMC_CCU8_SetMultiChannelShadowTransferMode(ccu8_0_HW, XMC_CCU8_MULTI_CHANNEL_SHADOW_TRANSFER_SW_SLICE0);
     XMC_CCU8_EnableShadowTransfer(ccu8_0_HW,XMC_CCU8_SHADOW_TRANSFER_SLICE_0 |XMC_CCU8_SHADOW_TRANSFER_DITHER_SLICE_0 |XMC_CCU8_SHADOW_TRANSFER_PRESCALER_SLICE_0 );
@@ -853,23 +868,28 @@ void init_cycfg_peripherals(void)
     XMC_CCU8_SLICE_SetTimerValue(PHASE_W_TIMER_HW, 0U);
     
     XMC_CCU8_SLICE_CompareInit(PWM_IRQ_TIMER_HW, &PWM_IRQ_TIMER_compare_config);
-    XMC_CCU8_SLICE_SetTimerCompareMatchChannel1(PWM_IRQ_TIMER_HW, 840U);
-    XMC_CCU8_SLICE_SetTimerCompareMatchChannel2(PWM_IRQ_TIMER_HW, 840U);
+    XMC_CCU8_SLICE_SetTimerCompareMatchChannel1(PWM_IRQ_TIMER_HW, 1679); // trigger ADC just before mid point // should be 1679
+    XMC_CCU8_SLICE_SetTimerCompareMatchChannel2(PWM_IRQ_TIMER_HW, 1300U); //  call ISR1 about 5 usec after mid point (when ADC conversions are done)
     XMC_CCU8_SLICE_SetTimerPeriodMatch(PWM_IRQ_TIMER_HW, 1680U);
     XMC_CCU8_SetMultiChannelShadowTransferMode(ccu8_0_HW, XMC_CCU8_MULTI_CHANNEL_SHADOW_TRANSFER_SW_SLICE3);
     XMC_CCU8_EnableShadowTransfer(ccu8_0_HW,XMC_CCU8_SHADOW_TRANSFER_SLICE_3 |XMC_CCU8_SHADOW_TRANSFER_DITHER_SLICE_3 |XMC_CCU8_SHADOW_TRANSFER_PRESCALER_SLICE_3 );
-    XMC_CCU8_SLICE_ConfigureEvent(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_EVENT_0, &PWM_IRQ_TIMER_event0_config);
+    XMC_CCU8_SLICE_ConfigureEvent(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_EVENT_0, &PWM_IRQ_TIMER_event0_config); // synchronised start
     XMC_CCU8_SLICE_ConfigureEvent(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_EVENT_1, &PWM_IRQ_TIMER_event1_config);
     XMC_CCU8_SLICE_ConfigureEvent(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_EVENT_2, &PWM_IRQ_TIMER_event2_config);
     XMC_CCU8_SLICE_StartConfig(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_EVENT_0, XMC_CCU8_SLICE_START_MODE_TIMER_START_CLEAR);
-    XMC_CCU8_SLICE_SetInterruptNode(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_PERIOD_MATCH, XMC_CCU8_SLICE_SR_ID_3);
-    XMC_CCU8_SLICE_SetInterruptNode(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_ONE_MATCH, XMC_CCU8_SLICE_SR_ID_2);
-    XMC_CCU8_SLICE_SetInterruptNode(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_COMPARE_MATCH_UP_CH_2, XMC_CCU8_SLICE_SR_ID_0);
-    XMC_CCU8_SLICE_SetInterruptNode(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_COMPARE_MATCH_DOWN_CH_1, XMC_CCU8_SLICE_SR_ID_1);
-    XMC_CCU8_SLICE_EnableEvent(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_PERIOD_MATCH);
+    
+    // here we trigger SR3 nearly at mid point of PWM cycle; to choose another time, Perhaps could be changed based on duty cycle and sector
+    
+    // do not activate period match and one match simultanously !!!!
+    //XMC_CCU8_SLICE_SetInterruptNode(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_PERIOD_MATCH, XMC_CCU8_SLICE_SR_ID_3);
+    XMC_CCU8_SLICE_SetInterruptNode(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_ONE_MATCH, XMC_CCU8_SLICE_SR_ID_0); // call ISR0 at begin of cycle
+    XMC_CCU8_SLICE_SetInterruptNode(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_COMPARE_MATCH_UP_CH_1, XMC_CCU8_SLICE_SR_ID_3); // trigger ADC
+    XMC_CCU8_SLICE_SetInterruptNode(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_COMPARE_MATCH_DOWN_CH_2, XMC_CCU8_SLICE_SR_ID_1); // call ISR1 after ADC conv
+    
+    //XMC_CCU8_SLICE_EnableEvent(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_PERIOD_MATCH);
     XMC_CCU8_SLICE_EnableEvent(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_ONE_MATCH);
-    XMC_CCU8_SLICE_EnableEvent(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_COMPARE_MATCH_UP_CH_2);
-    XMC_CCU8_SLICE_EnableEvent(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_COMPARE_MATCH_DOWN_CH_1);
+    XMC_CCU8_SLICE_EnableEvent(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_COMPARE_MATCH_UP_CH_1);
+    XMC_CCU8_SLICE_EnableEvent(PWM_IRQ_TIMER_HW, XMC_CCU8_SLICE_IRQ_ID_COMPARE_MATCH_DOWN_CH_2);
     //XMC_CCU8_EnableClock(ccu8_0_HW, PWM_IRQ_TIMER_NUM);
     XMC_CCU8_SLICE_SetTimerValue(PWM_IRQ_TIMER_HW, 0U);
 
@@ -895,8 +915,9 @@ void init_cycfg_peripherals(void)
     //XMC_WDT_Start();
 }
 
+
 // removed by mstrens to test another vadc init
-void VADC_init(){
+void VADC_initxxx(){
     /* Update group input classes configuration. */
     vadc_0_group0_init_config.class0 = vadc_0_0_iclass_0;
     vadc_0_group1_init_config.class0 = vadc_0_1_iclass_0;

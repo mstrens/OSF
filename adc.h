@@ -61,12 +61,12 @@
 #define VADC_I4_RESULT_REG    (1U)
 
 /* VADC Group 0 Alias channel 0 and channel 1 */
-#define VADC_G0_CHANNEL_ALIAS0  VADC_IV_G0_CHANNEL
-#define VADC_G0_CHANNEL_ALIAS1  VADC_IDC_CHANNEL
+#define VADC_G0_CHANNEL_ALIAS0  VADC_IV_G0_CHANNEL  //3
+#define VADC_G0_CHANNEL_ALIAS1  VADC_IDC_CHANNEL    // 1
 
 /* VADC Group 1 Alias channel 0 and channel 1 */
-#define VADC_G1_CHANNEL_ALIAS0  VADC_IW_G1_CHANNEL
-#define VADC_G1_CHANNEL_ALIAS1  VADC_IU_G1_CHANNEL
+#define VADC_G1_CHANNEL_ALIAS0  VADC_IW_G1_CHANNEL  // 3
+#define VADC_G1_CHANNEL_ALIAS1  VADC_IU_G1_CHANNEL  //4
 
 // DC link voltage VADC define 
 #define VADC_VDC_GROUP        VADC_G1
@@ -112,45 +112,6 @@ typedef enum SHS_GAIN_FACTOR
 /*********************************************************************************************************************
  * DATA STRUCTURES
  ***************************************/
-typedef struct ADCType
-{
-  uint16_t ADC_Iu;					 /* For 3-shunt phase current sensing */
-  uint16_t ADC_Iv;
-  uint16_t ADC_Iw;
-
-  uint16_t ADC_Bias_Iu;			/* Bias of ADC Iu. */
-  uint16_t ADC_Bias_Iv;			/* Bias of ADC Iv. */
-  uint16_t ADC_Bias_Iw;			/* Bias of ADC Iw. */
-
-	int32_t ADC_Pos_Iu;				/* +Iu. For 2-shunt phase current sensing, no external Op-Amps */
-	int32_t ADC_Pos_Iv;				/* +Iv */
-
-	uint16_t ADCTrig_Point;		/* ADC trigger position for 2or3-shunt current sensing */
-
-	int32_t ADC_POT;				  /* ADC Value of potentiometer (POT) */
-	int32_t ADC_DCLink;				/* ADC Value of inverter DC link voltage Vdc */
-  int32_t ADC_IDCLink;      /* ADC Value of inverter DC link current Idc*/
-	int32_t ADC_Bias;				  /* ADC for bias of dc-link current amplifier, or on-chip gain */
-	uint32_t ADC_ResultTz1;			/* ADC value (12-bit) of first motor phase current ADC sampling */
-	uint32_t ADC_ResultTz2;			/* For single-shunt current sensing. */
-	uint32_t ADC_Result3;
-	uint32_t ADC_Result4;
-
-	int32_t ADC_Result1;			/* Dedicated RAM for single-shunt 3-Phase Current Reconstruction */
-	int32_t ADC_Result2;
-
-	uint16_t ADC3Trig_Point;	/* Trigger position for ADC3, of single-shunt current sensing */
-	uint16_t ADC4Trig_Point;	/* Trigger position for ADC4 */
-
-	  uint16_t BEMF_U;        // BEMF for phase U, V and W.
-	  uint16_t BEMF_V;
-	  uint16_t BEMF_W;
-	  uint16_t BEMF_Max;        // Maximum value of BEMF_U and BEMF_V.
-	  uint16_t BEMF_UV_Threshold;   // Threshold, above it BEMF_U and BEMF_V are considered high.
-	
-	 uint16_t current_bias_counter ; // added by mstrens to count that there is enough bias measurement for bias (in DLE state)
-}ADCType;
-
 //void pmsm_phasecurrent_init(void);
 void pmsm_adc_module_init(void);
 void pmsm_adc_pot_init(void);

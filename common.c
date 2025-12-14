@@ -12,7 +12,7 @@
 #include "cy_utils.h"
 #include "cy_retarget_io.h"
 
-extern uint32_t system_ticks2;
+extern volatile uint32_t ui32_ms_counter;
 
 // Function to map a value from one range to another based on given input and output ranges.
 // Uses nearest integer rounding for precision.
@@ -79,12 +79,16 @@ uint8_t ui8_max(uint8_t value_a, uint8_t value_b) {
         return value_b;
 }
 
+
+
+
 uint16_t filter(uint16_t ui16_new_value, uint16_t ui16_old_value, uint8_t ui8_alpha) {
-    const uint8_t ui8_max_alpha = 16U;
+    #define MAX_ALPHA_BITS 4
+    const uint8_t ui8_max_alpha = 1<<MAX_ALPHA_BITS;  //16
     if (ui8_alpha < ui8_max_alpha) {
         uint32_t ui32_temp_new = (uint32_t) ui16_new_value * (uint32_t)(ui8_max_alpha - ui8_alpha);
 		uint32_t ui32_temp_old = (uint32_t) ui16_old_value * (uint32_t) ui8_alpha;
-        uint16_t ui16_filtered_value = (uint16_t)((ui32_temp_new + ui32_temp_old + ui8_max_alpha/2U) / ui8_max_alpha);
+        uint16_t ui16_filtered_value = (uint16_t)((ui32_temp_new + ui32_temp_old + (ui8_max_alpha>>1)) >> MAX_ALPHA_BITS);
 
         if (ui16_filtered_value == ui16_old_value) {
             if (ui16_filtered_value < ui16_new_value)
@@ -129,38 +133,171 @@ void lights_set_state(uint8_t ui8_state) {
     }
 }
 
-uint32_t last_action_systicks[10]= {0};
+uint32_t last_action_ms[10]= {0};
 
 // retun true when enlapsed time expired
 bool take_action(uint32_t index, uint32_t interval){
     if (index < 10) {
-        if ((system_ticks - last_action_systicks[index]) > interval){
-            last_action_systicks[index] = system_ticks;
+        if ((ui32_ms_counter - last_action_ms[index]) > interval){
+            last_action_ms[index] = ui32_ms_counter;
             return true;
         }
     }
     return false;
 }
 
-// retun true when enlapsed time expired
-bool take_action_250ms(uint32_t index, uint32_t interval){
-    if (index < 10) {
-        if ((system_ticks2 - last_action_systicks[index]) > interval){
-            last_action_systicks[index] = system_ticks2;
-            return true;
-        }
-    }
-    return false;
-}
 
 
 /*
 void wait_ms(uint32_t time){
-    uint32_t start = system_ticks;
+    uint32_t start = ui32_ms_counter;
     uint32_t counter = 0;
-    while ( (system_ticks - start) < time){
+    while ( (ui32_ms_counter - start) < time){
         counter++;
     }
     counter = 0;
 }
 */
+#include "SEGGER_RTT.h"
+#include <stdarg.h>
+#include <stdint.h>
+
+static void _itoa_fast(int value, char *buf) {
+  char tmp[12];
+  int i = 0, j = 0;
+  unsigned int v;
+
+  if (value < 0) {
+    buf[j++] = '-';
+    v = (unsigned int)(-value);
+  } else {
+    v = (unsigned int)value;
+  }
+
+  if (v == 0) {
+    buf[j++] = '0';
+    buf[j] = 0;
+    return;
+  }
+
+  while (v > 0 && i < (int)sizeof(tmp)) {
+    tmp[i++] = '0' + (v % 10);
+    v /= 10;
+  }
+
+  while (i > 0) buf[j++] = tmp[--i];
+  buf[j] = 0;
+}
+
+/**
+ * @brief Log multi-entiers avec suffixe texte optionnel (non bloquant, sans IRQ off)
+ *
+ * @param label  Préfixe (ex: "ADC")
+ * @param count  Nombre d'entiers à afficher
+ * @param tail   Texte final (ex: "\r\n", " END", ou NULL pour rien)
+ * @param ...    Les valeurs (int)
+ *
+ * Exemple:
+ *   RTT_LogN_Tail("ADC", 3, "\r\n", 10, 20, 30);
+ *   → "ADC=10,20,30\r\n"
+ *
+ *   RTT_LogN_Tail("DATA", 2, " OK", 1, 2);
+ *   → "DATA=1,2 OK"
+ */
+void RTT_LogN_Tail(const char *label, unsigned int count, const char *tail, ...) {
+  char msg[128];
+  unsigned int len = 0;
+  va_list args;
+
+  // préfixe
+  while (*label && len < sizeof(msg) - 1)
+    msg[len++] = *label++;
+
+//  msg[len++] = '=';
+
+  // valeurs
+  va_start(args, tail);
+  for (unsigned int i = 0; i < count && len < sizeof(msg) - 8; i++) {
+    int val = va_arg(args, int);
+    char numbuf[16];
+    _itoa_fast(val, numbuf);
+
+    for (unsigned int j = 0; numbuf[j] && len < sizeof(msg) - 1; j++)
+      msg[len++] = numbuf[j];
+
+    if (i < count - 1 && len < sizeof(msg) - 1)
+      msg[len++] = ',';
+  }
+  va_end(args);
+
+  // texte de fin optionnel
+  if (tail) {
+    while (*tail && len < sizeof(msg) - 1)
+      msg[len++] = *tail++;
+  }
+
+  SEGGER_RTT_WriteNoLock(0, msg, len);
+}
+
+#include "SEGGER_RTT.h"
+#include <stdarg.h>
+#include <stdint.h>
+
+/**
+ * @brief Conversion rapide en chaîne hexadécimale (8 caractères)
+ */
+static void _itoa_hex(uint32_t value, char *buf) {
+  static const char hex[] = "0123456789ABCDEF";
+  for (int i = 7; i >= 0; i--) {
+    buf[7 - i] = hex[(value >> (i * 4)) & 0xF];
+  }
+  buf[8] = 0;
+}
+
+/**
+ * @brief Log multi-entiers au format hexadécimal avec texte final optionnel
+ *
+ * @param label  Préfixe (ex: "REG")
+ * @param count  Nombre d'entiers à afficher
+ * @param tail   Texte final optionnel ("\r\n", " OK", NULL, etc.)
+ * @param ...    Les valeurs (int)
+ *
+ * Exemple:
+ *   RTT_LogN_TailHex("REG", 3, "\r\n", 0x1234, 0xDEAD, 0xBEEF);
+ *   → "REG=00001234,0000DEAD,0000BEEF\r\n"
+ */
+void RTT_LogN_TailHex(const char *label, unsigned int count, const char *tail, ...) {
+  char msg[128];
+  unsigned int len = 0;
+  va_list args;
+
+  // Préfixe
+  while (*label && len < sizeof(msg) - 1)
+    msg[len++] = *label++;
+
+  msg[len++] = '=';
+
+  // Valeurs hexadécimales
+  va_start(args, tail);
+  for (unsigned int i = 0; i < count && len < sizeof(msg) - 10; i++) {
+    uint32_t val = (uint32_t)va_arg(args, int); // valeurs signées converties
+    char hexbuf[9];
+    _itoa_hex(val, hexbuf);
+
+    for (unsigned int j = 0; hexbuf[j] && len < sizeof(msg) - 1; j++)
+      msg[len++] = hexbuf[j];
+
+    if (i < count - 1 && len < sizeof(msg) - 1)
+      msg[len++] = ',';  // séparateur
+  }
+  va_end(args);
+
+  // Texte final optionnel
+  if (tail) {
+    while (*tail && len < sizeof(msg) - 1)
+      msg[len++] = *tail++;
+  }
+
+  SEGGER_RTT_WriteNoLock(0, msg, len);
+}
+
