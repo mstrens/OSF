@@ -11,11 +11,11 @@ Compare to the TSDZ8 original firmware there are some expected benefits:
 * The user can adapt many parameters to his preferences.
 * The display can show more data (without having to change the display firmware) and allow you to make a few changes to the setup.
 
-As the TSDZ8 version is similar to TSDZ2 version, it is good to look at the TSDZ2 sites: 
+As the OSF TSDZ8 version is similar to TSDZ2 version, it is good to look at the TSDZ2 sites: 
 * look at Endless Sphere forum reference thread: [endless-sphere.com.](https://endless-sphere.com/forums/viewtopic.php?f=30&t=110682).
 * see the [wiki](https://github.com/emmebrusa/TSDZ2-Smart-EBike-1/wiki) from mbrusa
 
-This version differs with :
+Still this version differs with :
 * it requires a Jlink device instead of a stlink device to flash the firmware and the configuration in the controller
 * it does not require to install additionnal software in order to compile the firmware yourself. The firmware is already precompiled on this site. Still if you want to change some code, see below the tools to be installed. 
 * it is possible to fine tune one parameter (global offset angle in range -5/+5) in order to take care of litle differences (tolerances) that could exist between different motors. This is optionnal.
@@ -106,7 +106,7 @@ So you must OR disconnect the battery (or at least power it OFF) OR take care th
 
 
 Take also care to use the menu "manual programming" in J-flash and not the menu "Production programming F7".
-The menu "Production programming" has a default setup that erase totally the chip before flashing.
+The menu "Production programming" has a default setup that erases totally the chip before flashing.
 This can be an issue because OSF requires flashing 2 different hex files (the OSF firmware and the configuration hex file).
 While flashing one, you usually do not want to erase the other part of the flash memory.
 Note : J-flash allows to disable the erase step when using "production programming" but this requires a specific additional action. 
@@ -141,8 +141,7 @@ Reversely, the more the parameter is lower than 0 (up to -20), the more assistan
 
 Values for the different assist levels/modes are different from the default values for TSDZ2: TSDZ8 can provide more power than TSDZ2. In order to get access to the full power even for lower weight on the pedal the ratio value/assitance has been changed for TSDZ8. You have to use a lower value (2 X lower) to get the same assistance for Power, Torque and Hybrid assist modes.
 
-
-OSF has a parameter named "FOC multiplier" that has an impact on motor efficency (for high current). Default value is 26 but it is not sure it is the best value. You can experiment other values (lower or higher) but be careful that motor efficiency can decrease a lot and the motor can become unstable and overheat. So be carreful when testing other values and start first with small changes. To test another value, you have to edit the file named "other settings/TSDZ8_heading.ini" in the line "foc_angle_multiplier". Rreplace the value "26" by another one, let javaconfigurator generate a new TSDZ8_config.hex file and upload it in the controller. I do not expect that the best value should exceed 40.
+Note : this version of OSF does not use anymore a parameter named "FOC multiplier". OSF calculates now the lead angle using the battery current and a table based on the motor speed (RPM). Furthermore, it applies automatically a correction to improve efficiency. So following text should be discarded (kept for history onlly): "OSF has a parameter named "FOC multiplier" that has an impact on motor efficency (for high current). Default value is 26 but it is not sure it is the best value. You can experiment other values (lower or higher) but be careful that motor efficiency can decrease a lot and the motor can become unstable and overheat. So be carreful when testing other values and start first with small changes. To test another value, you have to edit the file named "other settings/TSDZ8_heading.ini" in the line "foc_angle_multiplier". Replace the value "26" by another one, let javaconfigurator generate a new TSDZ8_config.hex file and upload it in the controller. I do not expect that the best value should exceed 40."
 
 
 Note : there is no need to install all additional softwares mentioned in the manual as you will use only JavaConfigurator.jar and there is no need for compiling/flashing a STM microprocessor (on the opposite to TSDZ2).
@@ -152,7 +151,7 @@ So having java on you PC is enough.
 
 
 Doubble click (at least on Windows) on JavaConfigurator.jar
-It opens a graphical user interface. Take care to select TSDZ8 as "Motor type". After editing your preferences, click the button "Compile HEX file". The configurator will generate a new file named "files_to_flash/TSDZ8_config.hex".
+It opens a graphical user interface. Take care to select "TSDZ8" as "Motor type". After editing your preferences, click the button "Compile HEX file". The configurator will generate a new file named "files_to_flash/TSDZ8_config.hex".
 
 # 5.Flash the file with your configuraton
 
@@ -167,7 +166,7 @@ When the controller starts running, it checks that the firmware is compatible wi
 If not, it provides an error code E09 on the display (at least on VLCD5) and blocks the motor. It could be that the code is different (e.g. E08 on other displays). 
 
 # 6. Fine tune some parameters (optional) + monitor (optional).
-Note :  I am not sure that this section is still valid for 0.1.18 (and upper) version. It could be that it has to be updated. 
+Note :  this readme section is not valid anymore for 0.1.18 (and upper) version. It should be updated. Still it gives some principles that can be usefull for debugging.
 
 The motor use hall sensors to know the position of the rotor and synchronize the magnetic flux.
 There can be minor differences in the positions, the sensitivity and the hysteresis of those sensors.
