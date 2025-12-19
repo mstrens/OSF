@@ -444,13 +444,15 @@ inline __attribute__((always_inline)) uint32_t filtering_function(uint32_t ui32_
 }
 */
 
-
+/*
 void VADC0_G0_0_IRQHandler() {  // VADC is configured to compare the total current (12bits) with "1000" and generate an irq
     ui8_system_state = ERROR_BATTERY_OVERCURRENT; // set the error to avoid that motor starts again
     // disable the motor
     ui8_motor_enabled = 0;
     motor_disable_pwm();
 }
+*/
+
 
 // Lecture atomique et rapide des Halls
 __STATIC_INLINE uint8_t read_hall_pattern(void)

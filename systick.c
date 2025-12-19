@@ -262,7 +262,7 @@ void SysTick_Handler(void) {
 
 #define LEAD_STEP_MIN_DEGREE  (0.02)       // ≈ 0.022° // lead angle correction is updated per small steps; varies between min and max
 #define LEAD_STEP_MAX_DEGREE  (0.35)       // ≈ 0.35°
-#define MAX_LEAD_CORR_DEGREE  (5)        // max for correction (in plus and min)
+#define MAX_LEAD_CORR_DEGREE  (10)        // max for correction (in plus and min)
 
 #define LOW_SPEED_RPM        (200)       // below this speed, lead angle is set on 0
 #define SPEED_FILTER_A_Q15   (30000)  // coeff IIR vitesse (α≈0.9)
