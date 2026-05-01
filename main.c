@@ -28,7 +28,7 @@
 #include "ebike_app.h"
 #include "systick.h"
 #include <xmc_math.h>
-#include "eeprom.h"
+#include "eeprom.h"  // used only in VLCD5 version
 
 
 /*******************************************************************************
@@ -287,7 +287,7 @@ int main(void)
     ebike_app_init(); // mstrens : needed for VLCD5 version
 
     // added by Mstrens
-	hall_reference_angle = m_config.global_offset_angle + (uint8_t) DEFAULT_HALL_REFERENCE_ANGLE; 
+	hall_reference_angle = m_config.global_offset_angle + (uint8_t) DEFAULT_HALL_REFERENCE_ANGLE; // different for VLCD5 version
 	ui8_wheel_speed_simulate =  WHEEL_SPEED_SIMULATE; // load wheel speed simulate (so allow to change it with uc-probe)
 
     //XMC_WDT_Service();

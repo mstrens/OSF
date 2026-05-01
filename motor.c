@@ -262,9 +262,9 @@ volatile uint16_t ADC_Bias_Iv = 1 << 11; // ADC is 12 bits, 0 = mid point
 volatile uint16_t ADC_Bias_Iw = 1 << 11; // ADC is 12 bits, 0 = mid point 
 
 // used in systick to optimise lead angle based on average Id, Iq 
-int32_t i32_id_sum = 0;     // accumulate Id to use an average in systick based on 64 values
-int32_t i32_iq_sum = 0;     // idem for Iq
-uint8_t ui8_id_iq_counter = ID_IQ_COUNTER; // 64 ; used to filter id & iq ; pwm at 19kHz and systick at 200Hz => 19000/200 = 95 measurements
+volatile int32_t i32_id_sum = 0;     // accumulate Id to use an average in systick based on 64 values
+volatile int32_t i32_iq_sum = 0;     // idem for Iq
+volatile uint8_t ui8_id_iq_counter = ID_IQ_COUNTER; // 64 ; used to filter id & iq ; pwm at 19kHz and systick at 200Hz => 19000/200 = 95 measurements
 
 // to debug or used with cordic
 int16_t I_u; // to check current in each phase
@@ -421,7 +421,7 @@ uint8_t ticks_intervals_status; // 0 =  new data can be written; 1 data being wr
 
 
 
-inline __attribute__((always_inline)) uint32_t update_moving_average(uint32_t new_value){
+static __attribute__((always_inline)) uint32_t update_moving_average(uint32_t new_value){
     battery_current_moving_avg_sum -= battery_current_moving_avg_buffer[battery_current_moving_avg_index];
     battery_current_moving_avg_buffer[battery_current_moving_avg_index] = new_value;
     battery_current_moving_avg_sum += new_value;
@@ -980,12 +980,14 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 1300 c
     uint32_t i32_Iv2 = (i32_Iv >> 3) * (i32_Iv >> 3);
     uint32_t i32_Iw2 = (i32_Iw >> 3) * (i32_Iw >> 3);
 
+    #ifndef DISABLE_PHASE_CURRENT_PEAK_PROTECTION
     // Phase current Peak protection
     if(i32_Iu2 > PHASE_PEAK_TRIP2 || i32_Iv2 > PHASE_PEAK_TRIP2 || i32_Iw2 > PHASE_PEAK_TRIP2) {
         fault_phase_current_peak = true;
         motor_disable_pwm();
         ui8_motor_enabled = 0;
     }
+    #endif
 
     // RMS IIR phase (assembleur-like)
     int32_t diff;
@@ -999,12 +1001,14 @@ __RAM_FUNC void CCU80_1_IRQHandler(){ // called when ccu8 Slice 3 reaches 1300 c
     // RMS moteur (somme carrés)
     ui32_Imotor_rms_2_filt = ui32_Iu_rms_2_filt + ui32_Iv_rms_2_filt + ui32_Iw_rms_2_filt; 
 
-    // Idc fast
+    #ifndef DISABLE_IDC_FAST_PROTECTION
+    // Idc fast protection
     if(ui32_adc_battery_current_15b > IDC_FAST_TRIP) {
         fault_idc_fast = true;
         motor_disable_pwm();
         ui8_motor_enabled = 0;
             }
+    #endif
 
 // calculate clack transform 
     int32_t I_Alpha_1Q31;
@@ -1386,7 +1390,9 @@ __RAM_FUNC __attribute__((always_inline)) inline void pll_on_hall_event(uint16_t
     #define XMC_MATH_UNSIGNED_DIVISION                    ((uint32_t) 1 << MATH_DIVCON_USIGN_Pos)
     MATH->DIVCON = XMC_MATH_UNSIGNED_DIVISION;
     MATH->DVD    = (uint32_t)FACTOR_INV_DT_US_Q0_16;
-    MATH->DVS    = (uint32_t)dt_us;
+    // Prevent division by zero - clamp to minimum safe value
+    uint32_t dt_us_safe = (dt_us == 0) ? 1 : dt_us;
+    MATH->DVS    = dt_us_safe;
     
     //pll.prev_hall_phase_q8_8 = pll.ui16_last_hall_phase_q8_8;
     pll.ui16_last_hall_phase_q8_8 = hall_phase_q8_8;

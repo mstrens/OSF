@@ -102,11 +102,22 @@ void SysTick_Handler(void) {
 //}
     ui32_ms_counter++;  // used to detect timeout
     // --------- 1) cadence --------- 
-    // Cherche l’index (0..4) ayant le timestamp le plus grand
+    // Cherche l'index (0..4) ayant le timestamp le plus grand
     uint8_t ui8_cadence_idx_max = 0;
-    uint32_t ui32_cadence_tick_max = ui32_cadence_last_ticks[0];
+    uint32_t ui32_cadence_tick_snapshot[5];
+
+    // Atomically capture all cadence values
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    for (uint8_t i = 0; i < 5; ++i) {
+        ui32_cadence_tick_snapshot[i] = ui32_cadence_last_ticks[i];
+    }
+    __set_PRIMASK(primask);
+
+    // Process snapshot (no longer needs protection)
+    uint32_t ui32_cadence_tick_max = ui32_cadence_tick_snapshot[0];
     for (uint8_t i = 1; i <= 4; ++i) {
-        uint32_t t = ui32_cadence_last_ticks[i];
+        uint32_t t = ui32_cadence_tick_snapshot[i];
         if(t > ui32_cadence_tick_max) { ui32_cadence_tick_max = t; ui8_cadence_idx_max = i; }
     }
 
@@ -125,7 +136,7 @@ void SysTick_Handler(void) {
                 ui32_prev_cadence_tick = ui32_cadence_tick_max;
                 ui8_pas_counter = 0; // mstrens :  reset the counter for full rotation used to detect a full rotation for torque (spider)
             } else { // On a déjà une référence
-                uint32_t ui32_curr_cadence_tick = ui32_cadence_last_ticks[i8_prev_cadence_index]; 
+                uint32_t ui32_curr_cadence_tick = ui32_cadence_tick_snapshot[i8_prev_cadence_index]; 
                 // if tick for same index is different, then calculate elapsed ticks
                 if (ui32_curr_cadence_tick != ui32_prev_cadence_tick) {
                     uint32_t ui32_cadence_delta_ticks = ui32_curr_cadence_tick  - ui32_prev_cadence_tick;
@@ -155,7 +166,7 @@ void SysTick_Handler(void) {
     }
      
     // --------- 2) Wheel --------- 
-    uint32_t ui32_wheel_pwm_tick = ui32_wheel_last_pwm_ticks; // ui32_wheel_last_pwm_ticks = pwm ticks of last rising edge
+    uint32_t ui32_wheel_pwm_tick = ui32_wheel_last_pwm_ticks; // single aligned 32-bit read is atomic on Cortex-M4
     if (ui32_wheel_pwm_tick != ui32_prev_wheel_pwm_tick) {
         uint32_t ui32_wheel_delta_ticks;
         if (ui32_prev_wheel_pwm_tick == 0) {
@@ -260,21 +271,31 @@ void SysTick_Handler(void) {
 #define DEG_TO_Q8_8(x)      ((uint16_t)((x) * (65536.0f / 360.0f) + 0.5f))
 #define HALL_VELOCITY_RATIO          (4.474f)      // ratio between RPM and hall velocity_q8_8x1024
 
-#define LEAD_STEP_MIN_DEGREE  (0.02)       // ≈ 0.022° // lead angle correction is updated per small steps; varies between min and max
-#define LEAD_STEP_MAX_DEGREE  (0.35)       // ≈ 0.35°
-#define MAX_LEAD_CORR_DEGREE  (10)        // max for correction (in plus and min)
+#define LEAD_STEP_MIN_DEGREE  (0.01)       // finer steps near optimum (was 0.02)
+#define LEAD_STEP_MAX_DEGREE  (0.08)       // reduced slew rate: 16°/s vs 70°/s (was 0.35)
+#define MAX_LEAD_CORR_DEGREE  (7)          // correction range ±7° (was ±4°, originally ±10°)
 
 #define LOW_SPEED_RPM        (200)       // below this speed, lead angle is set on 0
 #define SPEED_FILTER_A_Q15   (30000)  // coeff IIR vitesse (α≈0.9)
 #define SPEED_FILTER_B_Q15   (32768 - SPEED_FILTER_A_Q15)
 
-#define IDABS_DEFAULT        (100)       // seuil absolu min en ADC units ;  Dead band adaptatif; this is the min ; it applies on Id
-#define K_REL_Q15            (1638)      // 0.05 * 32768 (5%)
+#define IDABS_DEFAULT        (40)        // reduced from 100 to allow correction to converge closer to true optimum (~2° offset vs ~5°)
+#define K_REL_Q15            (983)       // 0.03 * 32768 (3%) — reduced from 5% to allow tighter convergence under load
 #define HYST_FACTOR_Q15      (29491)     // 0.9 en Q15
 
 #define LEAD_ANGLE_Q8_8_PER_ADC_STEP (17) // = 750 / 45 = 17 : Test showed that for a speed of about 2500 RPM,
                  // lead angle should varies by about 3° = 750 q8_8 units for a delta of 45 ADC steps
                  //                           45 = between 10 and 55 ADC current 10 bits 
+
+// Field weakening via lead angle extension (controlled by display FW toggle)
+#define FW_DUTY_TARGET          250    // ~98% duty: FW aims to keep PWM at this level
+#define FW_LEAD_MAX_DEGREE      10     // max FW offset in degrees
+#define FW_LEAD_STEP_DEGREE     0.05   // ramp rate per 200Hz tick
+#define LEAD_TOTAL_MAX_DEGREE   45     // absolute max total lead angle
+
+#define FW_LEAD_MAX_Q8_8    ((int32_t)((FW_LEAD_MAX_DEGREE * 65536L) / 360))
+#define FW_LEAD_STEP_Q8_8   ((int32_t)(FW_LEAD_STEP_DEGREE * (65536.0f / 360.0f) + 0.5f))
+#define LEAD_TOTAL_MAX_Q8_8 ((uint16_t)((LEAD_TOTAL_MAX_DEGREE * 65536L) / 360))
 
 #define MAX_LEAD_CORR_Q8_8  ((uint16_t)((MAX_LEAD_CORR_DEGREE << 16)/360))  // apply on corection
 #define LEAD_STEP_MIN_Q8_8  ((uint16_t)(LEAD_STEP_MIN_DEGREE * (65536.0f / 360.0f) + 0.5f)) // apply on total   
@@ -283,10 +304,12 @@ void SysTick_Handler(void) {
 // ---------------------------------------------------
 // Tables de base (utilisateur)
 // ---------------------------------------------------
-const uint16_t speed_tab[] = {0,     500,  1000, 2000, 3000, 4000};
+// Derived from: angle(RPM) = 0.464 × arctan(0.000297 × RPM)
+// See lead_angle_curve.md for curve fitting details
+const uint16_t speed_tab[] = {0,     500,  1000, 2000, 3000, 4000, 4700, 5500};
 #define SPEED_TAB_SIZE (sizeof(speed_tab) / sizeof(speed_tab[0]))
-
-const float lead_base_deg[] = {0.0f, 2.0f, 4.0f, 7.5f, 11.0f, 14.0f};
+                              // RPM:  0     500   1000  2000   3000   4000   4700   5500
+const float lead_base_deg[] = {0.0f, 4.0f, 8.0f, 14.0f, 19.0f, 23.0f, 25.0f, 27.0f};
 
 // ---------------------------------------------------
 // Tables internes générées au premier passage
@@ -302,12 +325,16 @@ static uint8_t tables_initialized = 0;
 // ---------------------------------------------------
 static uint16_t tick_5ms = 0;
 static int32_t  i32_pll_velocity_filt_q8_8X1024 = 0;
-static int32_t  lead_corr_q8_8 = 0;
-static uint16_t lead_base_q8_8_val = 0;
-uint16_t ui16_lead_total_q8_8 = 0;
 static int16_t i16_adc_battery_current_for_lead_base = 0;
 // Deadband adaptatif
 static int32_t last_deadband = 0;
+uint16_t ui16_lead_base_rpm_q8_8 = 0;
+uint16_t ui16_lead_base_current_q8_8 = 0;
+uint16_t ui16_lead_base_total_q8_8 = 0; 
+uint16_t ui16_lead_corr_q8_8 = 0;
+static int32_t  lead_corr_q8_8 = 0;
+static int32_t  fw_lead_offset_q8_8 = 0; // field weakening lead angle offset
+uint16_t ui16_lead_total_q8_8 = 0;
 
 // ---------------------------------------------------
 // Fonctions utilitaires
@@ -388,11 +415,12 @@ void update_lead_angle(void)
     // ----------------------
     // Lead base interpolation based on pll velocity
     // ----------------------
-    uint16_t ui16_lead_base_q8_8_val = interpolate_lead_base_from_hall_velocity((uint16_t)pll_velocity_used);
+    ui16_lead_base_rpm_q8_8 = interpolate_lead_base_from_hall_velocity((uint16_t)pll_velocity_used);
     // add more lead angle when current incease
     i16_adc_battery_current_for_lead_base = filter_i16((int16_t)ui8_adc_battery_current_filtered,i16_adc_battery_current_for_lead_base, 6);
-    lead_base_q8_8_val = ui16_lead_base_q8_8_val + (i16_adc_battery_current_for_lead_base * LEAD_ANGLE_Q8_8_PER_ADC_STEP); 
-    if (lead_base_q8_8_val > (25<<8))lead_base_q8_8_val = (25<<8); // do not exceed 25*360 /256 = 35°
+    ui16_lead_base_current_q8_8 = (i16_adc_battery_current_for_lead_base * LEAD_ANGLE_Q8_8_PER_ADC_STEP); 
+    ui16_lead_base_total_q8_8 = ui16_lead_base_rpm_q8_8 + ui16_lead_base_current_q8_8;
+    if (ui16_lead_base_total_q8_8 > (25<<8))ui16_lead_base_total_q8_8 = (25<<8); // do not exceed 25*360 /256 = 35°
 
     // lead correction based on Id (taking care of Iq and speed)
     int32_t Id_filt = 0;
@@ -400,6 +428,8 @@ void update_lead_angle(void)
     
     // Here we calculate Id and Iq filtered (based on process in ISR0 or ISR 1) that are used for optimisation of lead angle based on Id    
     if ( ui8_id_iq_counter == 0 ){    
+        uint32_t primask = __get_PRIMASK();
+        __disable_irq();
         Id_filt = i32_id_sum >> 6; 
         Iq_filt = i32_iq_sum >> 6;
         // only for debug
@@ -408,6 +438,7 @@ void update_lead_angle(void)
         i32_id_sum = 0;
         i32_iq_sum = 0;
         ui8_id_iq_counter = ID_IQ_COUNTER; // 64 Reset counter
+        __set_PRIMASK(primask);
     }
 
     // ----------------------
@@ -444,12 +475,32 @@ void update_lead_angle(void)
         // clamp correction 
         lead_corr_q8_8 = clamp32(lead_corr_q8_8, -MAX_LEAD_CORR_Q8_8, MAX_LEAD_CORR_Q8_8); // max = -10° + 10°
     }
+    
+    ui16_lead_corr_q8_8 = (uint16_t) lead_corr_q8_8;
  
     // Calcul total
-    ui16_lead_total_q8_8 = (uint16_t)lead_base_q8_8_val + (uint16_t)lead_corr_q8_8;
+    ui16_lead_total_q8_8 = (uint16_t)ui16_lead_base_total_q8_8 + (uint16_t)lead_corr_q8_8;
+
+    // Field weakening: target PWM at ~98% by adjusting lead angle beyond efficiency optimum
+    // Controlled by display FW toggle (ui8_field_weakening_enabled includes speed check)
+    if (ui8_field_weakening_enabled) {
+        uint8_t duty = (uint8_t)(ui16_g_duty_cycle >> 8);
+        if (duty >= FW_DUTY_TARGET && fw_lead_offset_q8_8 < FW_LEAD_MAX_Q8_8) {
+            fw_lead_offset_q8_8 += FW_LEAD_STEP_Q8_8;
+        } else if (duty < FW_DUTY_TARGET && fw_lead_offset_q8_8 > 0) {
+            fw_lead_offset_q8_8 -= FW_LEAD_STEP_Q8_8;
+            if (fw_lead_offset_q8_8 < 0) fw_lead_offset_q8_8 = 0;
+        }
+    } else {
+        fw_lead_offset_q8_8 = 0;
+    }
+
+    // Add FW offset to total, with absolute cap
+    ui16_lead_total_q8_8 += (uint16_t)fw_lead_offset_q8_8;
+    if (ui16_lead_total_q8_8 > LEAD_TOTAL_MAX_Q8_8)
+        ui16_lead_total_q8_8 = LEAD_TOTAL_MAX_Q8_8;
 
 }
-
 
 
 // security checks in systick
@@ -581,20 +632,20 @@ void update_duty_cycle(void){
             || (ui16_adc_voltage < ui16_adc_voltage_cut_off)                                  // voltage is to low
             || (ui8_brake_state)
             ) {                                                           // brake is ON
-        //  first decrement field weakening angle if set or duty cycle if not
-        if (ui16_fw_hall_counter_offset > 0) {
-            if(ui16_fw_hall_counter_offset > ui16_controller_duty_cycle_ramp_down_step){
-                ui16_fw_hall_counter_offset -= ui16_controller_duty_cycle_ramp_down_step;
-            } else {
-                ui16_fw_hall_counter_offset = 0;
-            }        
-        }   else {
+        // Old FW hall counter ramp-down — no longer used, FW is handled in update_lead_angle()
+        // if (ui16_fw_hall_counter_offset > 0) {
+        //     if(ui16_fw_hall_counter_offset > ui16_controller_duty_cycle_ramp_down_step){
+        //         ui16_fw_hall_counter_offset -= ui16_controller_duty_cycle_ramp_down_step;
+        //     } else {
+        //         ui16_fw_hall_counter_offset = 0;
+        //     }
+        // } else {
             if (ui16_g_duty_cycle > ui16_controller_duty_cycle_ramp_down_step) {
                     ui16_g_duty_cycle  -= ui16_controller_duty_cycle_ramp_down_step;
             } else {
                 ui16_g_duty_cycle = 0;
             }
-        }
+        // }
     } else if(t_ramp_up_delay == 0) { // ramp up but only if not delayed due to a security check
         if ((ui8_controller_duty_cycle_target > (ui16_g_duty_cycle >> 8))                     // requested duty cycle is higher than actual
                 && (ui8_controller_adc_battery_current_target > ui8_adc_battery_current_filtered)) { //Requested current is higher than actual
@@ -608,15 +659,14 @@ void update_duty_cycle(void){
             }
             ui16_g_duty_cycle = temp_duty;
         }
-        else if ((ui8_field_weakening_enabled) && (ui16_g_duty_cycle == (ui8_pwm_duty_cycle_max << 8))) {
-            // increment field weakening angle
-            uint32_t temp_fw = ui16_fw_hall_counter_offset + ui16_controller_duty_cycle_ramp_up_step;        
-            // clamp
-            if (temp_fw > (ui8_fw_hall_counter_offset_max << 8)) {
-                temp_fw = (ui8_fw_hall_counter_offset_max << 8);
-            }
-            ui16_fw_hall_counter_offset = temp_fw;
-        }
+        // Old FW hall counter offset — replaced by lead angle FW in update_lead_angle()
+        // else if ((ui8_field_weakening_enabled) && (ui16_g_duty_cycle == (ui8_pwm_duty_cycle_max << 8))) {
+        //     uint32_t temp_fw = ui16_fw_hall_counter_offset + ui16_controller_duty_cycle_ramp_up_step;
+        //     if (temp_fw > (ui8_fw_hall_counter_offset_max << 8)) {
+        //         temp_fw = (ui8_fw_hall_counter_offset_max << 8);
+        //     }
+        //     ui16_fw_hall_counter_offset = temp_fw;
+        // }
     }    
 }
 

@@ -91,9 +91,9 @@ uint32_t pll_get_rpm(void);
 //extern volatile uint16_t ui16_g_foc_angle_q8_8; // not used anymore with optimised lead angle in systick.c
 extern uint32_t ui32_hall_velocity_q8_8X1024;
 
-extern int32_t i32_id_sum ;
-extern int32_t i32_iq_sum ;
-extern uint8_t ui8_id_iq_counter ;
+extern volatile int32_t i32_id_sum ;
+extern volatile int32_t i32_iq_sum ;
+extern volatile uint8_t ui8_id_iq_counter ;
 
 // for security checks ; shared with systicks
 extern volatile uint32_t ui32_Iu_rms_2_filt;

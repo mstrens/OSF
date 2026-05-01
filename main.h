@@ -13,7 +13,7 @@
 #include "config_tsdz8.h"
 #include "common.h"
 
-#define FIRMWARE_VERSION "0.2.1"      // based on test6 with pll for 860C
+#define FIRMWARE_VERSION "0.2.4"      // based on test6 with pll for 860C
 #define MAIN_CONFIGURATOR_VERSION 6  // for configurator (must be the same as in javaconfigurator TSDZ8_header.ini file)
 #define SUB_CONFIGURATOR_VERSION  0    // is not used (just for reference)
 
@@ -139,6 +139,7 @@
 // It seems TSDZ8 motor has an inductance of 180 uH and 4 poles
 // So, TSDZ2 uses a multiplier = 39, TSDZ8 should use 39 * 180 / 135 * 4 / 8 = 26  (foc is based on erps*L*I/V) 
 // I reduce it because erps should be 2X lower due to the reduced number of poles
+// note : with version O.2.X, this parameter is not used anymore because lead angle is dynamically optimised
 #define FOC_ANGLE_MULTIPLIER					26 // seems better with a test done by ebikestuff
 
 
@@ -367,19 +368,23 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 
 // security checks added by mstrens (see use in systick.c and motor.c)
 #define PHASE_PEAK_ADC_NOMINAL     (800.0)     // not sure about the value; I do not know the shunt, gain of amp.
-                                              // // ADC is 12 bit = max 4096; offset is about 2048; So max is about 2048
-#define PHASE_PEAK_TRIP_RATIO       (2.2)      // disable the motor when this limit is reached (need a power off to reset)
+                                              // ADC is 12 bit = max 4096; offset is about 2048; So max is about 2048
+                                              // initial value to test is 800
+#define PHASE_PEAK_TRIP_RATIO       (2.8)      // disable the motor when this limit is reached (need a power off to reset) (first value was 2.2)
 #define PHASE_RMS_WARN_RATIO       (1.8)       // reduce power during RAMP_UP_DELAY_TICKS (e.g. 2 sec)
 #define IMOTOR_RMS_WARN_RATIO       (1.5)      // reduce power during RAMP_UP_DELAY_TICKS (e.g. 2 sec)
 
 #define IDC_NOMINAL_AMPERE          (13.0)     // Amp
-#define IDC_FAST_TRIP_RATIO         (2.5)      // disable the motor when this limit is reached (need a power off to reset)
-#define IDC_SLOW_WARN_RATIO         (1.5)      // reduce power during RAMP_UP_DELAY_TICKS (e.g. 2 sec)
+#define IDC_FAST_TRIP_RATIO         (3.0)      // disable the motor when this limit is reached (need a power off to reset); first value was 2.5
+#define IDC_SLOW_WARN_RATIO         (2.0)      // reduce power during RAMP_UP_DELAY_TICKS (e.g. 2 sec); first value was 1.5
 
 #define RAMP_UP_DELAY_TICKS 2000  // 2000 ms Timer anti ramp up (avoid ramp up when soft error occured for some ms)
 
 // note : Systick.c contains also some set up for lead angle (table, steps, RPM, ...)
 
+//======== next defines allows to disable some security checks on maximum current
+//#define DISABLE_PHASE_CURRENT_PEAK_PROTECTION
+//#define DISABLE_IDC_FAST_PROTECTION
 
 
 
@@ -395,9 +400,9 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 #define RX_STX						0x59
 
 // parameters for display data
-#define MILES										1
+#define MILES						1
 
-#define DATA_INDEX_ARRAY_DIM						6
+#define DATA_INDEX_ARRAY_DIM		6
 
 /*
 // delay lights function (0.1 sec)
@@ -433,7 +438,7 @@ HALL_COUNTER_OFFSET_UP:    29 -> 44
 #define BEFORE_ECO									1
 #define AFTER_TURBO									2
 
-//#define ASSIST_PEDAL_LEVEL01_PERCENT			60
+//#define ASSIST_PEDAL_LEVEL01_PERCENT			60 // is not used in the code
 
 // assist mode
 #define OFFROAD_MODE				0

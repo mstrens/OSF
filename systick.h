@@ -46,6 +46,11 @@ extern volatile uint8_t ui8_fw_hall_counter_offset;
 extern volatile uint8_t ui8_fw_hall_counter_offset_max;
 extern volatile uint8_t ui8_field_weakening_enabled;
 
+extern uint16_t ui16_lead_base_rpm_q8_8;
+extern uint16_t ui16_lead_base_current_q8_8;
+extern uint16_t ui16_lead_base_total_q8_8; 
+extern uint16_t ui16_lead_corr_q8_8;
+extern uint16_t ui16_lead_total_q8_8;
 
 
 
